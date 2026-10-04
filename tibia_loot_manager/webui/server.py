@@ -9,6 +9,7 @@ reaching it. Static files hold no data, so they need no token.
 import json
 import mimetypes
 import secrets
+import sys
 import traceback
 import urllib.parse
 from http import HTTPStatus
@@ -84,6 +85,12 @@ class Server(ThreadingHTTPServer):
         self.on_ping = on_ping or (lambda: None)
         super().__init__(("127.0.0.1", port), Handler)
 
+    def handle_error(self, request, client_address):
+        """A window closing drops its connections; that is normal, not an error worth a traceback."""
+        if isinstance(sys.exc_info()[1], (ConnectionResetError, ConnectionAbortedError, BrokenPipeError)):
+            return
+        super().handle_error(request, client_address)
+
     @property
     def url(self) -> str:
         return f"http://127.0.0.1:{self.server_address[1]}/?t={self.token}"
@@ -104,9 +111,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
+        extra = extra or {}
+        if "Cache-Control" not in extra:
+            self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
-        for k, v in (extra or {}).items():
+        for k, v in extra.items():
             self.send_header(k, v)
         self.end_headers()
         self.wfile.write(body)
@@ -139,6 +148,8 @@ class Handler(BaseHTTPRequestHandler):
         url = urllib.parse.urlsplit(self.path)
         if url.path.startswith("/api/"):
             return self._api(method, url)
+        if url.path.startswith("/sprite/") and method == "GET":
+            return self._sprite(url)
         if method != "GET":
             return self._json(HTTPStatus.METHOD_NOT_ALLOWED, {"error": "method not allowed"})
         return self._static(url.path)
@@ -154,6 +165,21 @@ class Handler(BaseHTTPRequestHandler):
         csp = ("default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; "
                "script-src 'self'; connect-src 'self'; frame-ancestors 'none'")
         self._send(HTTPStatus.OK, target.read_bytes(), ctype, {"Content-Security-Policy": csp})
+
+    def _sprite(self, url) -> None:
+        """Item image. <img> can't send headers, so the token comes in the query string."""
+        query = urllib.parse.parse_qs(url.query)
+        if not secrets.compare_digest((query.get("t") or [""])[-1], self.server.token):
+            self.close_connection = True
+            return self._json(HTTPStatus.FORBIDDEN, {"error": "bad token"})
+        name = url.path[len("/sprite/"):]
+        if not name.isdigit() or len(name) > 9:
+            return self._json(HTTPStatus.NOT_FOUND, {"error": "not found"})
+        data = self.server.service.item_image(int(name))
+        if not data:
+            return self._json(HTTPStatus.NOT_FOUND, {"error": "no image"})
+        # The URL carries the client version, so a cached image is never stale.
+        self._send(HTTPStatus.OK, data, "image/png", {"Cache-Control": "private, max-age=604800, immutable"})
 
     def _api(self, method: str, url) -> None:
         if not secrets.compare_digest(self.headers.get("X-Token", ""), self.server.token):
@@ -178,6 +204,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(HTTPStatus.OK, handler(params))
         except UserError as e:
             return self._json(HTTPStatus.CONFLICT, {"error": str(e), "user": True})
+        except (ValueError, TypeError) as e:  # malformed parameters
+            return self._json(HTTPStatus.BAD_REQUEST, {"error": f"Invalid request: {e}", "user": True})
         except SourceError as e:
             return self._json(HTTPStatus.BAD_GATEWAY, {"error": str(e), "user": True})
         except Exception as e:  # unexpected: report it so the page can offer a problem report

@@ -4,6 +4,7 @@ The HTTP layer only routes requests here; nothing in this module knows about
 HTML. All access to the library and user state goes through ``self.lock``.
 """
 
+import copy
 import os
 import threading
 import webbrowser
@@ -15,10 +16,10 @@ from ..help_content import FAQ, RELEASE_NOTES
 from ..i18n import _
 from ..library import (
     ID_STATUS_DETAIL, MAPPING_STATE, ORIGIN_DELIVERY_SOURCE, ORIGIN_DELIVERY_USER, ORIGIN_MANUAL, STATE_TEXT,
-    UNVERIFIED, VERIFIED, Entry, client_key, delivery_url,
+    UNVERIFIED, VERIFIED, Entry, delivery_url,
 )
 from ..search import matches_search
-from ..sources import tibia_client, tibiawiki
+from ..sources import sprites, tibia_client, tibiawiki
 from ..sources.http import PoliteHttpClient
 from ..sources.registry import KIND_TEXT, SOURCES
 from ..sources.tibiawiki import TibiaWikiSource
@@ -74,6 +75,7 @@ class AppService:
                 problems=" ".join(self.library.reference_issues)))
         self._update = None  # {"thread", "progress", "review", "error"}
         self._pending_install = None  # (folder, plan) shown in the last preview
+        self._images = None  # (key, sprites.ItemImages | None)
 
     # --- shared helpers ---------------------------------------------------------------
 
@@ -101,6 +103,37 @@ class AppService:
     def _find(self, entries: list[Entry], key: str) -> Entry | None:
         cid = int(key) if key.isdigit() else None
         return next((e for e in entries if e.key == key or (cid is not None and e.client_id == cid)), None)
+
+    # --- item images -----------------------------------------------------------------
+
+    def _sprite_version(self) -> str:
+        src = self.library.catalog.get("source") or {}
+        name = src.get("appearances_file") or ""
+        return name.removeprefix("appearances-")[:16] or (src.get("client_version") or "none")
+
+    def item_image(self, client_id: int) -> bytes | None:
+        """The item's picture, made from the installed client's sprites (cached on disk)."""
+        with self.lock:
+            item = self.library.items_by_id.get(client_id)
+            if not item or not item.get("sprite"):
+                return None
+            src = self.library.catalog.get("source") or {}
+            package = src.get("package_dir") or str(paths.client_package_dir(
+                Path(self.library.state.characterdata_dir or paths.default_characterdata_dir())))
+            key = (package, self._sprite_version())
+            if self._images is None or self._images[0] != key:
+                try:
+                    images = sprites.ItemImages(Path(package), self.store.cache / "sprites", key[1])
+                except (sprites.SpriteError, OSError):
+                    images = None
+                self._images = (key, images)
+            images, sprite = self._images[1], item["sprite"]
+        if images is None:
+            return None
+        try:
+            return images.image(client_id, sprite)
+        except (sprites.SpriteError, OSError):
+            return None
 
     # --- overview ----------------------------------------------------------------------
 
@@ -135,6 +168,7 @@ class AppService:
                 "support": {"can_send": config.can_send_reports, "contact": config.contact_link(),
                             "has_contact": config.has_contact},
                 "app_data": str(self.store.root),
+                "sprite_version": self._sprite_version(),
             }
 
     def set_theme(self, theme: str) -> dict:
@@ -296,6 +330,8 @@ class AppService:
             }
 
     def lookup_drops(self, key: str) -> dict:
+        if not key.isdigit():
+            raise UserError(_("Only items with a Tibia item ID can be looked up."))
         cid = int(key)
         with self.lock:
             name = self.library.lookup_title_hint(cid)
@@ -712,13 +748,16 @@ class AppService:
                 return self.update_status()
             job = {"running": True, "progress": _("Starting…"), "review": None, "error": None}
             self._update = job
+            # The check runs for minutes without the lock; give it a stable copy of the user's edits.
+            snapshot = copy.copy(self.library)
+            snapshot.state = copy.deepcopy(self.library.state)
 
         def progress(text):
             job["progress"] = text
 
         def work():
             try:
-                job["review"] = check_for_updates(self.library, self.http, progress=progress)
+                job["review"] = check_for_updates(snapshot, self.http, progress=progress)
             except Exception as e:  # reported to the user; caches are untouched
                 job["error"] = str(e)
             finally:

@@ -24,6 +24,9 @@ class RedactTest(unittest.TestCase):
         self.assertNotIn("someone@example.com", out)
         self.assertIn("characterdata\\<character folder>", out)
 
+    def test_short_label_matches_whole_words_only(self):
+        self.assertEqual(support.redact("week of Ek, ek.", ["Ek"]), "week of <character label>, <character label>.")
+
 
 class DiagnosticsTest(unittest.TestCase):
     def test_item_diagnostics(self):

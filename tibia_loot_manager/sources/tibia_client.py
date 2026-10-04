@@ -18,11 +18,12 @@ from pathlib import Path
 from ..storage import utc_now_iso
 
 SOURCE_ID = "tibia_client"
-PARSER_VERSION = 2  # bump when parsing rules change so cached catalogs are rebuilt
+PARSER_VERSION = 3  # bump when parsing rules change so cached catalogs are rebuilt
 
 # appearances.proto field numbers
 _APPEARANCES_OBJECT = 1
 _APPEARANCE_ID = 1
+_APPEARANCE_FRAME_GROUP = 2
 _APPEARANCE_FLAGS = 3
 _APPEARANCE_NAME = 4
 _FLAG_CUMULATIVE = 6
@@ -39,6 +40,12 @@ _NPC_BUY_PRICE = 4  # price the NPC pays the player
 _NPC_CURRENCY_OBJECT = 5
 _NPC_CURRENCY_QUEST_FLAG = 6
 _CYCLOPEDIA_TYPE = 1
+_FRAME_GROUP_SPRITE_INFO = 3
+_SPRITE_PATTERN_WIDTH, _SPRITE_PATTERN_HEIGHT, _SPRITE_PATTERN_DEPTH, _SPRITE_LAYERS = 1, 2, 3, 4
+_SPRITE_IDS = 5
+_SPRITE_ANIMATION = 6
+_ANIMATION_PHASE = 6
+_PHASE_DURATION_MIN = 1
 
 # Client market categories. Unknown numbers are shown as "Category N" rather than guessed.
 MARKET_CATEGORIES = {
@@ -105,6 +112,42 @@ def _group(buf: bytes) -> dict[int, list]:
     return out
 
 
+def _sub(group: dict[int, list], field: int) -> dict[int, list]:
+    """The first nested message in ``field``, or {} if it is absent or not a message."""
+    value = group.get(field, [None])[0]
+    return _group(value) if isinstance(value, bytes) else {}
+
+
+def _ints(values: list) -> list[int]:
+    """Repeated varints, whether sent one by one or packed into a single bytes field."""
+    out = []
+    for v in values:
+        if isinstance(v, int):
+            out.append(v)
+            continue
+        pos = 0
+        while pos < len(v):
+            n, pos = _varint(v, pos)
+            out.append(n)
+    return out
+
+
+def _sprite_info(obj: dict[int, list]) -> dict | None:
+    """Sprite IDs of the item's icon (first pattern and layer) for each animation phase."""
+    info = _sub(_sub(obj, _APPEARANCE_FRAME_GROUP), _FRAME_GROUP_SPRITE_INFO)
+    ids = _ints(info.get(_SPRITE_IDS, []))
+    if not ids:
+        return None
+    per_phase = 1
+    for key in (_SPRITE_PATTERN_WIDTH, _SPRITE_PATTERN_HEIGHT, _SPRITE_PATTERN_DEPTH, _SPRITE_LAYERS):
+        value = info.get(key, [1])[0]
+        per_phase *= value if isinstance(value, int) and value > 0 else 1
+    phases = [_group(p) for p in _sub(info, _SPRITE_ANIMATION).get(_ANIMATION_PHASE, []) if isinstance(p, bytes)]
+    count = max(1, min(len(phases), len(ids) // per_phase))
+    return {"ids": [ids[i * per_phase] for i in range(count)],
+            "durations": [max(20, p.get(_PHASE_DURATION_MIN, [100])[0]) for p in phases[:count]] if count > 1 else []}
+
+
 # --- discovery ----------------------------------------------------------------
 
 @dataclass
@@ -156,7 +199,7 @@ def parse_appearances(data: bytes) -> dict[int, dict]:
     names_by_id: dict[int, str] = {}
     variants: dict[int, list[int]] = {}
     for field, value in _fields(data):
-        if field != _APPEARANCES_OBJECT:
+        if field != _APPEARANCES_OBJECT or not isinstance(value, bytes):
             continue
         obj = _group(value)
         oid = obj.get(_APPEARANCE_ID, [None])[0]
@@ -164,13 +207,12 @@ def parse_appearances(data: bytes) -> dict[int, dict]:
         if oid is None or not name:
             continue
         names_by_id[oid] = name
-        flags = _group(obj[_APPEARANCE_FLAGS][0]) if _APPEARANCE_FLAGS in obj else {}
+        flags = _sub(obj, _APPEARANCE_FLAGS)
         if not flags.get(_FLAG_TAKE, [0])[0]:
             continue
-        cyclopedia = _group(flags[_FLAG_CYCLOPEDIA_ITEM][0]) if _FLAG_CYCLOPEDIA_ITEM in flags else {}
-        if cyclopedia.get(_CYCLOPEDIA_TYPE, [None])[0] != oid:
+        if _sub(flags, _FLAG_CYCLOPEDIA_ITEM).get(_CYCLOPEDIA_TYPE, [None])[0] != oid:
             continue
-        market = _group(flags[_FLAG_MARKET][0]) if _FLAG_MARKET in flags else None
+        market = _sub(flags, _FLAG_MARKET) or None
         market_category = market.get(_MARKET_CATEGORY, [None])[0] if market else None
         trade_as = market.get(_MARKET_TRADE_AS, [oid])[0] if market else oid
         if trade_as != oid:
@@ -182,7 +224,8 @@ def parse_appearances(data: bytes) -> dict[int, dict]:
             "market_category": market_category,
             "category": category_name(market_category),
             "stackable": bool(flags.get(_FLAG_CUMULATIVE, [0])[0]),
-            "_npc": flags.get(_FLAG_NPCSALEDATA, []),
+            "sprite": _sprite_info(obj),
+            "_npc": [b for b in flags.get(_FLAG_NPCSALEDATA, []) if isinstance(b, bytes)],
         }
 
     for item in raw.values():
@@ -219,7 +262,7 @@ def read_catalog(package_dir: Path) -> dict:
     try:
         data = install.appearances_path.read_bytes()
         items = parse_appearances(data)
-    except (OSError, IndexError) as e:
+    except (OSError, IndexError, ValueError, ClientDataError) as e:
         raise ClientDataError(f"Could not parse {install.appearances_path.name}: {e}") from None
     if not items:
         raise ClientDataError("No items were found in the client appearances file.")

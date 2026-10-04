@@ -161,6 +161,16 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(self.request("POST", "/api/theme", {"theme": "light"}, conn=conn)[0], 200)
         self.assertEqual(json.loads(self.request("GET", "/api/state", conn=conn)[1])["theme"], "light")
 
+    def test_sprites_need_token_and_valid_id(self):
+        self.assertEqual(self.request("GET", "/sprite/3031", token=False)[0], 403)
+        self.assertEqual(self.request("GET", f"/sprite/abc?t={self.server.token}", token=False)[0], 404)
+        # the fixture has no client sprite sheets, so a known item simply has no image
+        self.assertEqual(self.request("GET", f"/sprite/3031?t={self.server.token}", token=False)[0], 404)
+
+    def test_malformed_parameters(self):
+        self.assertEqual(self.request("GET", "/api/catalog?offset=abc")[0], 400)
+        self.assertEqual(self.request("POST", "/api/item/lookup", {"key": "wiki:Buckle"})[0], 409)
+
     def test_user_errors_are_reported(self):
         status, body = self.request("POST", "/api/settings/limit", {"limit": "-3"})
         self.assertEqual(status, 409)

@@ -19,7 +19,7 @@ from pathlib import Path
 
 from . import __version__, paths
 from .i18n import _
-from .library import ID_STATUS_DETAIL, ID_STATUS_TEXT, MAPPING_STATE, STATE_TEXT, Library
+from .library import ID_STATUS_DETAIL, MAPPING_STATE, STATE_TEXT, Library
 from .storage import read_json
 
 CONFIG_FILE = "support.json"
@@ -128,7 +128,7 @@ def redact(text: str, labels: list[str] | tuple = ()) -> str:
     text = re.sub(r"[^@\s<>\"']+@[^@\s<>\"']+\.\w+", "<email>", text)
     for label in labels:
         if label and len(label) >= 2:
-            text = re.sub(re.escape(label), "<character label>", text, flags=re.IGNORECASE)
+            text = re.sub(r"(?<!\w)" + re.escape(label) + r"(?!\w)", "<character label>", text, flags=re.IGNORECASE)
     return text
 
 

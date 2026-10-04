@@ -13,7 +13,7 @@ from tibia_loot_manager.storage import read_json
 from .test_library import CATALOG, delivery
 
 OLD = delivery(("Buckle", [1]), ("Sliver", [2]), ("Book", [3]))
-NEW = delivery(("Buckle", [1]), ("Book", [3]), ("Gold Coin", [9]))
+NEW = delivery(("Buckle", [1]), ("Book", [3]), ("Gold Nugget", [9]))
 NEW["items"]["Buckle"]["max_qty"] = 50
 
 
@@ -21,7 +21,7 @@ class DiffTest(unittest.TestCase):
     def test_delivery_diff(self):
         lib = Library(CATALOG, OLD, {}, UserState())
         changes = {(c.kind, c.key): c for c in U.diff_delivery(OLD, NEW, lib)}
-        self.assertEqual(set(changes), {(U.NEW, "Gold Coin"), (U.REMOVED, "Sliver"), (U.CHANGED, "Buckle")})
+        self.assertEqual(set(changes), {(U.NEW, "Gold Nugget"), (U.REMOVED, "Sliver"), (U.CHANGED, "Buckle")})
         self.assertIn("max: 2 → 50", changes[(U.CHANGED, "Buckle")].details)
         self.assertIn("Accepted Loot", changes[(U.REMOVED, "Sliver")].user_note)
 
@@ -57,7 +57,7 @@ class ApplyTest(unittest.TestCase):
         self.lib.add_to_accepted(9)
         self.lib.remove_from_delivery(next(e for e in self.lib.delivery_entries()[0] if e.client_id == 3))
         U.apply_update(self.review(), self.lib, self.store)
-        self.assertEqual(self.lib.delivery_ids(), {1, 9})  # Book still excluded; Gold Coin new
+        self.assertEqual(self.lib.delivery_ids(), {1, 9})  # Book still excluded; Gold Nugget new
         self.assertIn(9, self.lib.accepted_ids())
         self.assertNotIn(2, self.lib.accepted_ids())  # removed by the source
         log = self.store.source_log()

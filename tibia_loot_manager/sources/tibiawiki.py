@@ -128,10 +128,13 @@ def parse_dropped_by(value: str) -> list[str]:
     return [n for n in names if n and "=" not in n]
 
 
-def item_record(title: str, content: str, timestamp: str | None) -> dict:
+def item_record(title: str, content: str, timestamp: str | None, pageid: int | None = None) -> dict:
+    """One wiki item page. ``itemids`` are Tibia (client) item IDs as listed by the wiki;
+    ``pageid`` is the wiki's own page number and is never used as an item ID."""
     box = parse_infobox(content)
     return {
         "title": title,
+        "pageid": pageid,
         "url": page_url(title),
         "page_timestamp": timestamp,
         "itemids": parse_item_ids(box.get("itemid", "")),
@@ -180,6 +183,7 @@ class TibiaWikiSource:
                 rev = page["revisions"][0]
                 results[original] = {
                     "title": page["title"],
+                    "pageid": page.get("pageid"),
                     "content": rev.get("slots", {}).get("main", {}).get("content", ""),
                     "timestamp": rev.get("timestamp"),
                 }
@@ -197,7 +201,8 @@ class TibiaWikiSource:
         items: dict[str, dict] = {}
         for row in rows:
             info = item_pages.get(row["title"], {"missing": True})
-            wiki = None if info.get("missing") else item_record(info["title"], info["content"], info["timestamp"])
+            wiki = (None if info.get("missing") else
+                    item_record(info["title"], info["content"], info["timestamp"], info.get("pageid")))
             key = row["title"]
             if key in items:  # same item listed twice: keep the first, note the extra category
                 items[key].setdefault("also_in", []).append(row["task_category"])
@@ -260,11 +265,11 @@ class TibiaWikiSource:
                     continue
                 rev = p["revisions"][0]
                 record = item_record(p["title"], rev.get("slots", {}).get("main", {}).get("content", ""),
-                                     rev.get("timestamp"))
+                                     rev.get("timestamp"), p["pageid"])
                 if not record["itemids"]:
                     skipped[p["pageid"]] = rev.get("revid")
                     continue
-                record.update(pageid=p["pageid"], revid=rev.get("revid"))
+                record["revid"] = rev.get("revid")
                 pages[p["title"]] = record
         return {
             "source": {"id": INDEX_SOURCE_ID, "url": page_url(OBJECT_TEMPLATE), "fetched_at": utc_now_iso(),
@@ -286,7 +291,7 @@ class TibiaWikiSource:
         for title, page in self.fetch_pages(titles).items():
             if page.get("missing"):
                 continue
-            record = item_record(page["title"], page["content"], page["timestamp"])
+            record = item_record(page["title"], page["content"], page["timestamp"], page.get("pageid"))
             if client_id in record["itemids"]:
                 record["fetched_at"] = utc_now_iso()
                 return record

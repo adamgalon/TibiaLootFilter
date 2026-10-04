@@ -11,6 +11,8 @@ ITEMS = {
     7183: {"id": 7183, "name": "baby seal doll", "category": "Decoration", "npc_offers": [], "variants": [7184]},
     903: {"id": 903, "name": "badger fur", "category": "Decoration", "npc_offers": []},
     10299: {"id": 10299, "name": "badger fur", "category": "Creature Products", "npc_offers": []},
+    3031: {"id": 3031, "name": "gold coin", "category": "Others", "npc_offers": []},
+    3035: {"id": 3035, "name": "platinum coin", "category": "Others", "npc_offers": []},
 }
 PAGES = {
     "Bag": {"title": "Bag", "itemids": [2853], "actualname": "bag", "primarytype": "Containers"},

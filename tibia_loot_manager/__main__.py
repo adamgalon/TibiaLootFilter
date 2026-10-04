@@ -1,3 +1,3 @@
-from .ui.app import main
+from .webui.main import main
 
 main()

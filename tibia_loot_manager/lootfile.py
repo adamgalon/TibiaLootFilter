@@ -259,6 +259,12 @@ def install(plan: InstallPlan, folder: CharacterFolder, backups_root: Path) -> I
         if backup:
             shutil.copyfile(backup, folder.file_path)
             raise LootFileError(_("Install failed and the previous file was restored: {error}").format(error=e)) from e
+        if plan.creates_file:
+            try:
+                folder.file_path.unlink()
+            except FileNotFoundError:
+                pass
+            raise LootFileError(_("Install failed and the new file was removed: {error}").format(error=e)) from e
         raise
     return InstallResult(backup, folder.file_path)
 

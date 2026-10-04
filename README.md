@@ -39,6 +39,21 @@ internet: the Inter font (OFL) and Phosphor icons (MIT) are bundled in `web/vend
 
 The theme follows your choice (dark or light, toggled in the sidebar) and is remembered.
 
+## Item pictures
+
+Pictures come from your installed client, not from the internet. The client keeps every item sprite in compressed
+sheets (`assets/sprites-*.bmp.lzma`, listed in `catalog-content.json`). The app decodes the sheet holding an item's
+sprite with Python's built-in `lzma` and cuts out the item. It trims the transparent edges and saves a PNG, or an
+animated PNG when the item has animation frames (for example the lit lamp or the fiery weapons). Pictures are
+cached per client version in `%LOCALAPPDATA%\TibiaLootManager\cache\sprites\`, so each is made only once.
+
+This approach was chosen over a web source such as TibiaWiki's GIFs because:
+
+- each picture belongs to the exact Tibia item ID, with no name matching;
+- it works offline and stays in sync with every game update automatically;
+- the game's artwork (© CipSoft) is never bundled in this repository. It is read from your own client on your own
+  computer.
+
 ## What each screen does
 
 | Screen | Purpose |

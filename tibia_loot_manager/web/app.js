@@ -38,7 +38,8 @@ function html(strings, ...vals) { let out = ''; strings.forEach((s, i) => { out 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 function fmtDate(v, withTime = true) {
   if (!v) return 'never';
-  const d = typeof v === 'number' ? new Date(v * 1000) : new Date(v);
+  const d = typeof v === 'number' ? new Date(v * 1000)
+    : /^\d{4}-\d{2}-\d{2}$/.test(v) ? new Date(v + 'T00:00:00') : new Date(v);
   if (isNaN(d)) return String(v);
   const t = withTime ? `, ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` : '';
   return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}${t}`;
@@ -51,6 +52,10 @@ const icon = (name, extra = '') => {
   extra = extra.replace(/class="([^"]*)"/, (_, c) => { cls += ' ' + c; return ''; });
   return html`<i class="${cls}" ${raw(extra)} aria-hidden="true"></i>`;
 };
+// Item picture from the installed client (served by /sprite/<id>); empty slot when an item has none.
+const spriteSlot = (id, size, extra = '') => id
+  ? html`<div class="slot has-img ${raw(extra)}" style="width:${size}px;height:${size}px"><img src="/sprite/${id}?t=${encodeURIComponent(TOKEN)}&v=${S.app ? S.app.sprite_version : ''}" alt="" loading="lazy" decoding="async"></div>`
+  : html`<div class="slot ${raw(extra)}" style="width:${size}px;height:${size}px"></div>`;
 const STATE_LABEL = { verified: 'Verified', unverified: 'Unverified', conflicting: 'Conflicting' };
 const stateTag = (state, extra = '') => html`<span class="tag tag-sm tag-${state}" ${raw(extra)}>${STATE_LABEL[state] || state}</span>`;
 
@@ -334,7 +339,7 @@ function viewCatalogRows() {
   if (!c.rows.length) return html`<div style="padding:30px 10px;color:var(--muted)">${c.q ? html`No items match “${c.q}”.` : 'No items match these filters.'}</div>`;
   return html`${c.rows.slice(0, c.shown).map(r => html`
     <div class="cat-grid cat-row ${c.sel === r.key ? 'sel' : ''}" data-act="cat-select" data-key="${r.key}">
-      <div class="slot" style="width:34px;height:34px"></div>
+      ${spriteSlot(r.id, 34)}
       <div style="min-width:0"><div class="ellipsis" style="font-size:14px">${r.name}</div><div class="ellipsis" style="font-size:12px;color:var(--muted)">${r.sub}</div></div>
       <div class="mono" style="font-size:12.5px;color:${r.id ? 'var(--color-text)' : 'var(--warn)'}">${r.id ?? '—'}</div>
       <div style="display:flex;gap:5px;flex-wrap:wrap">
@@ -362,7 +367,7 @@ function viewDetail() {
   return html`
   <aside class="detail" aria-label="Item details">
     <div style="display:flex;gap:14px;align-items:center">
-      <div class="slot mono" style="width:64px;height:64px;border-radius:6px;display:grid;place-items:center;font-size:9.5px;color:var(--muted)">sprite</div>
+      ${spriteSlot(d.id, 64, 'lg')}
       <div style="min-width:0"><div style="font-size:20px;font-weight:500;line-height:1.2">${d.name}</div><div style="font-size:12.5px;color:var(--muted);margin-top:3px">${d.category}</div></div>
     </div>
     <div style="display:flex;flex-direction:column;gap:8px">
@@ -393,7 +398,7 @@ function viewDetail() {
     <div>
       <div class="kicker" style="margin-bottom:8px">Dropped by</div>
       ${d.drops && !d.drops.not_found
-        ? html`<div style="display:flex;gap:5px;flex-wrap:wrap">${(d.drops.list.length ? d.drops.list.slice(0, 12) : ['No creatures listed']).map(x => html`<span class="tag tag-neutral">${x}</span>`)}${d.drops.list.length > 12 ? html`<span class="tag tag-outline">+${d.drops.list.length - 12} more</span>` : ''}</div>
+        ? html`<div style="display:flex;gap:5px;flex-wrap:wrap">${(d.drops.list.length ? d.drops.list.slice(0, 12).map(x => html`<span class="tag tag-neutral">${x}</span>`) : html`<span style="font-size:13px;color:var(--muted)">TibiaWiki lists no creatures for this item.</span>`)}${d.drops.list.length > 12 ? html`<span class="tag tag-outline">+${d.drops.list.length - 12} more</span>` : ''}</div>
                <div style="font-size:11.5px;color:var(--muted);margin-top:8px">TibiaWiki · page revised ${fmtDate(d.drops.revised, false)} · fetched ${fmtDate(d.drops.fetched, false)}</div>`
         : d.drops && d.drops.not_found
           ? html`<div style="font-size:13px;color:var(--muted)">No TibiaWiki page lists this item ID.</div>`
@@ -438,7 +443,7 @@ function viewDelivery() {
           <thead><tr><th style="width:44px"></th><th>Item</th><th style="width:90px">Client ID</th><th style="width:100px">Requested</th><th style="width:120px;text-align:right">NPCs pay</th><th style="width:150px">Status</th><th style="width:130px"></th></tr></thead>
           <tbody>${g.rows.map(r => html`
             <tr>
-              <td><div class="slot" style="width:28px;height:28px"></div></td>
+              <td>${spriteSlot(r.id, 28)}</td>
               <td><a href="#" data-act="show-item" data-key="${r.key}" style="color:${r.on ? 'var(--color-text)' : 'var(--muted)'};text-decoration:none">${r.name}</a></td>
               <td class="mono" style="font-size:12.5px;color:${r.id ? 'var(--color-text)' : 'var(--warn)'}">${r.id ?? '—'}</td>
               <td class="mono" style="font-size:12.5px">${r.qty}</td>
@@ -492,7 +497,7 @@ function viewAccepted() {
       <thead><tr><th style="width:44px"></th><th>Item</th><th style="width:100px">Item ID</th><th style="width:170px">Comes from</th><th style="width:110px"></th></tr></thead>
       <tbody>${d.rows.map(r => html`
         <tr>
-          <td><div class="slot" style="width:28px;height:28px"></div></td>
+          <td>${spriteSlot(r.id, 28)}</td>
           <td><a href="#" data-act="show-item" data-key="${r.key}" style="color:inherit;text-decoration:none">${r.name}</a> ${r.state !== 'verified' ? stateTag(r.state, 'style="margin-left:6px;padding:1px 7px"') : ''}</td>
           <td class="mono" style="font-size:12.5px;color:${r.id ? 'var(--color-text)' : 'var(--warn)'}">${r.id ?? '—'}</td>
           <td style="font-size:13px;color:var(--muted)">${r.from}</td>
@@ -766,7 +771,7 @@ function viewUpdateModal(m) {
       ${!rows.length ? html`<div style="padding:18px 4px;color:var(--muted);font-size:13px">No ${tab} records.</div>` : ''}
     </div>
     ${r.removed_delivery ? html`<label style="display:flex;gap:8px;align-items:center;font-size:13px;cursor:pointer"><input type="checkbox" data-change="update-keep" ${raw(m.keep ? 'checked' : '')}>Keep the ${plural(r.removed_delivery, 'item', 'items')} removed from the source on my Delivery Task list</label>` : ''}
-    <div style="font-size:12.5px;color:var(--muted);display:flex;gap:6px;align-items:center">${icon('shield-check', 'class="accent"')}Your ${num(r.kept.excluded)} exclusions and ${num(r.kept.added)} additions are kept as they are.</div>
+    <div style="font-size:12.5px;color:var(--muted);display:flex;gap:6px;align-items:center">${icon('shield-check', 'class="accent"')}Your ${plural(r.kept.excluded, 'exclusion', 'exclusions')} and ${plural(r.kept.added, 'addition', 'additions')} are kept as they are.</div>
     <div class="dialog-actions">
       <button class="btn btn-secondary" data-act="update-cancel">Cancel</button>
       ${r.any_success ? html`<button class="btn btn-primary" data-act="update-apply" data-autofocus>Apply changes</button>` : ''}
@@ -1105,6 +1110,10 @@ document.addEventListener('focusout', e => {
     guard(async () => { await post('install/label', { folder: el.dataset.folder, label: el.value }); S.ins.editing = null; await LOADERS.install(); render(); });
   }
 });
+
+document.addEventListener('error', e => {
+  if (e.target && e.target.tagName === 'IMG') { e.target.remove(); }
+}, true);
 
 // keep the app alive while this window is open
 setInterval(() => post('ping').catch(() => {}), 5000);

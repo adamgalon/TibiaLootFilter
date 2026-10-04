@@ -13,10 +13,15 @@ def running_tibia_paths() -> list[str]:
         return []
     psapi = ctypes.WinDLL("psapi")
     kernel32 = ctypes.WinDLL("kernel32")
-    pids = (wintypes.DWORD * 4096)()
-    needed = wintypes.DWORD()
-    if not psapi.EnumProcesses(ctypes.byref(pids), ctypes.sizeof(pids), ctypes.byref(needed)):
-        return []
+    capacity = 4096
+    while True:  # grow until the list fits; a full buffer may have been cut short
+        pids = (wintypes.DWORD * capacity)()
+        needed = wintypes.DWORD()
+        if not psapi.EnumProcesses(ctypes.byref(pids), ctypes.sizeof(pids), ctypes.byref(needed)):
+            return []
+        if needed.value < ctypes.sizeof(pids):
+            break
+        capacity *= 2
     found = []
     for pid in pids[: needed.value // ctypes.sizeof(wintypes.DWORD)]:
         handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)

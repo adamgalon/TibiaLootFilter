@@ -15,7 +15,7 @@ import time
 import tkinter as tk
 import webbrowser
 from pathlib import Path
-from tkinter import filedialog
+from tkinter import filedialog, messagebox
 
 from .. import paths
 from .server import Server
@@ -71,6 +71,26 @@ class TkDialogs(Dialogs):
                                                               initialdir=initial_dir))
 
 
+def acquire_single_instance_lock():
+    """Hold an exclusive lock on a file in the app data folder for the app's lifetime.
+
+    Two copies of the app would both save the same user_state.json and the
+    later save would silently undo the other's edits. Returns the open file
+    (keep it referenced) or None if another copy already holds the lock.
+    """
+    if sys.platform != "win32":
+        return open(paths.app_data_dir() / "app.lock", "a+")
+    import msvcrt
+    handle = open(paths.app_data_dir() / "app.lock", "a+")
+    try:
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+    except OSError:
+        handle.close()
+        return None
+    return handle
+
+
 def main() -> None:
     if sys.platform == "win32":
         try:
@@ -79,6 +99,11 @@ def main() -> None:
             pass
     root = tk.Tk()
     root.withdraw()
+    lock = acquire_single_instance_lock()
+    if lock is None:
+        messagebox.showinfo("Tibia Loot List Manager", "The app is already running. Switch to its window.")
+        root.destroy()
+        return
     dialogs = TkDialogs(root)
     service = AppService(dialogs=dialogs)
 
@@ -91,10 +116,13 @@ def main() -> None:
     proc = None
     if edge:
         profile = paths.app_data_dir() / "window"
-        proc = subprocess.Popen([edge, f"--app={server.url}", f"--user-data-dir={profile}", "--no-first-run",
-                                 "--no-default-browser-check", "--disable-features=Translate",
-                                 "--window-size=1320,860"])
-    else:
+        try:
+            proc = subprocess.Popen([edge, f"--app={server.url}", f"--user-data-dir={profile}", "--no-first-run",
+                                     "--no-default-browser-check", "--disable-features=Translate",
+                                     "--window-size=1320,860"])
+        except OSError:
+            proc = None
+    if proc is None:
         webbrowser.open(server.url)
 
     owner = {"known": False, "owns": False}
@@ -122,3 +150,4 @@ def main() -> None:
     finally:
         server.shutdown()
         root.destroy()
+        lock.close()

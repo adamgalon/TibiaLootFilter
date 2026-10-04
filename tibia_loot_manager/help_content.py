@@ -36,6 +36,11 @@ FAQ = [
 ]
 
 RELEASE_NOTES = [
+    ("0.4.0", "2026-10-04", [
+        _("Item pictures everywhere, made from your installed client's own sprites; animated items move."),
+        _("Fixes: report redaction no longer alters words that contain a short character label; the app can't be "
+          "opened twice; a failed first install leaves no half-written file."),
+    ]),
     ("0.3.0", "2026-10-04", [
         _("New interface from the Loot Manager design: sidebar navigation, dark and light themes, card layouts and "
           "dialogs."),

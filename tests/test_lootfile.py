@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tibia_loot_manager import lootfile as LF
 
@@ -85,6 +86,18 @@ class InstallTest(unittest.TestCase):
         result = LF.install(LF.plan_install(None, [1], LF.REPLACE), folder, self.backups)
         self.assertIsNone(result.backup)
         self.assertEqual(LF.read_file(folder.file_path)["whitelistTypes"], [1])
+
+    def test_failed_new_file_is_removed(self):
+        folder = self.chars()["222"]
+        plan = LF.plan_install(None, [1], LF.REPLACE)
+
+        def broken(file_path, data, staging):
+            file_path.write_text("{half")
+            raise OSError("disk full")
+        with mock.patch.object(LF, "_write_verified", broken):
+            with self.assertRaises(LF.LootFileError):
+                LF.install(plan, folder, self.backups)
+        self.assertFalse(folder.file_path.exists())
 
     def test_refuses_if_file_changed_since_preview(self):
         folder = self.chars()["111"]

@@ -10,29 +10,86 @@ Effective lists are always computed from these, never stored, so a source
 update or a user edit can change one layer without losing the others.
 """
 
+import re
 from dataclasses import dataclass
 
 from .i18n import _
 from .sources import tibiawiki
+from .sources.registry import COMMUNITY_WIKI, OFFICIAL_CLIENT
 from .state import UserState
 from .values import NPC_CHARGES, NPC_PAYS, ItemValue
 
-# ID mapping outcomes for items that come from the wiki
-VERIFIED = "verified"
+# --- Tibia item ID mapping -------------------------------------------------------------
+#
+# The "Tibia item ID" is the client type ID that the official client writes to
+# lootBlackWhitelist.json (e.g. gold coin = 3031). It is never confused with a
+# wiki page ID or an Open Tibia/TFS server ID; this app does not use those.
+#
+# Every mapping has one of three states, with a reason code for the details.
+
+VERIFIED, UNVERIFIED, CONFLICTING = "verified", "unverified", "conflicting"
+
+# reason codes → state
+OK_CLIENT_AND_WIKI = "ok_client_and_wiki"  # installed client and TibiaWiki agree
+OK_CLIENT_ONLY = "ok_client_only"  # from the installed client; no wiki page claims this ID
 NO_CLIENT_DATA = "no_client_data"
+CLIENT_DATA_SUSPECT = "client_data_suspect"  # reference items did not match: parsing may be wrong
 NO_WIKI_ID = "no_wiki_id"
-ID_MISMATCH = "id_mismatch"
 NOT_IN_CLIENT = "not_in_client"
+ID_MISMATCH = "id_mismatch"
 AMBIGUOUS = "ambiguous"
+WIKI_NAME_CONFLICT = "wiki_name_conflict"
+
+MAPPING_STATE = {
+    OK_CLIENT_AND_WIKI: VERIFIED, OK_CLIENT_ONLY: VERIFIED,
+    NO_CLIENT_DATA: UNVERIFIED, CLIENT_DATA_SUSPECT: UNVERIFIED, NO_WIKI_ID: UNVERIFIED, NOT_IN_CLIENT: UNVERIFIED,
+    ID_MISMATCH: CONFLICTING, AMBIGUOUS: CONFLICTING, WIKI_NAME_CONFLICT: CONFLICTING,
+}
+
+STATE_TEXT = {VERIFIED: _("Verified"), UNVERIFIED: _("Unverified"), CONFLICTING: _("Conflicting")}
 
 ID_STATUS_TEXT = {
-    VERIFIED: _("Verified"),
+    OK_CLIENT_AND_WIKI: _("Verified"),
+    OK_CLIENT_ONLY: _("Verified (client only)"),
     NO_CLIENT_DATA: _("Unverified: no client data loaded"),
+    CLIENT_DATA_SUSPECT: _("Unverified: client data failed the reference check"),
     NO_WIKI_ID: _("Unverified: wiki lists no client ID"),
-    ID_MISMATCH: _("Unverified: wiki ID and client name disagree"),
     NOT_IN_CLIENT: _("Unverified: not found in installed client"),
-    AMBIGUOUS: _("Unverified: several client items match"),
+    ID_MISMATCH: _("Conflicting: wiki ID and client name disagree"),
+    AMBIGUOUS: _("Conflicting: several client items match"),
+    WIKI_NAME_CONFLICT: _("Conflicting: TibiaWiki names this ID differently"),
 }
+
+ID_STATUS_DETAIL = {
+    OK_CLIENT_AND_WIKI: _("The installed Tibia client and TibiaWiki both list this ID for this item."),
+    OK_CLIENT_ONLY: _("The ID and name come from the installed Tibia client. No TibiaWiki page lists this ID."),
+    NO_CLIENT_DATA: _("No installed client data is loaded, so the ID cannot be checked."),
+    CLIENT_DATA_SUSPECT: _("Known reference items (e.g. gold coin = 3031) did not match the installed client data, "
+                           "so no ID is trusted until this is resolved."),
+    NO_WIKI_ID: _("TibiaWiki gives no client ID for this item."),
+    NOT_IN_CLIENT: _("This ID or name was not found in the installed Tibia client."),
+    ID_MISMATCH: _("TibiaWiki's ID points to a client item with a different name."),
+    AMBIGUOUS: _("More than one client item matches the wiki's name and IDs."),
+    WIKI_NAME_CONFLICT: _("A TibiaWiki page lists this ID under a different item name."),
+}
+
+# Known IDs used to check that the installed client data was read correctly.
+REFERENCE_ITEMS = {3031: "gold coin", 3035: "platinum coin"}
+
+
+def name_key(name: str) -> str:
+    """Normalise a name for comparison: case, apostrophes/punctuation and spacing are ignored."""
+    joined = re.sub(r"\s+(?=['’])", "", name.lower())  # "brainstealer 's" → "brainstealer's"
+    return " ".join(re.sub(r"[^\w\s]", "", joined).split())
+
+
+def page_names(record: dict) -> set[str]:
+    """Names a wiki page may use for its item: title, title without a "(…)" qualifier, actualname."""
+    title = record["title"]
+    names = {name_key(title), name_key(re.sub(r"\s*\([^)]*\)\s*$", "", title))}
+    if record.get("actualname"):
+        names.add(name_key(record["actualname"]))
+    return names
 
 ORIGIN_DELIVERY_SOURCE = "delivery_source"
 ORIGIN_DELIVERY_USER = "delivery_user"
@@ -63,8 +120,13 @@ class Entry:
     delivery: dict | None = None  # source Delivery Task record, if any
 
     @property
+    def mapping_state(self) -> str:
+        return MAPPING_STATE.get(self.id_status, UNVERIFIED)
+
+    @property
     def exportable(self) -> bool:
-        return self.client_id is not None and self.id_status == VERIFIED
+        """Only verified Tibia item IDs may be exported or installed."""
+        return self.client_id is not None and self.mapping_state == VERIFIED
 
 
 def resolve_client_id(title: str, wiki: dict | None, ids_by_name: dict[str, list[int]],
@@ -77,14 +139,12 @@ def resolve_client_id(title: str, wiki: dict | None, ids_by_name: dict[str, list
     """
     if not items_by_id:
         return None, NO_CLIENT_DATA
-    names = {title.lower()}
-    if wiki and wiki.get("actualname"):
-        names.add(wiki["actualname"].lower())
+    names = page_names({"title": title, "actualname": (wiki or {}).get("actualname")})
     by_name = {cid for n in names for cid in ids_by_name.get(n, [])}
     wiki_ids = set(wiki.get("itemids", [])) if wiki else set()
     agreed = by_name & wiki_ids
     if len(agreed) == 1:
-        return next(iter(agreed)), VERIFIED
+        return next(iter(agreed)), OK_CLIENT_AND_WIKI
     if len(agreed) > 1:
         return None, AMBIGUOUS
     if not wiki_ids:
@@ -94,23 +154,56 @@ def resolve_client_id(title: str, wiki: dict | None, ids_by_name: dict[str, list
     return None, ID_MISMATCH
 
 
-def match_wiki_pages(items_by_id: dict[int, dict], pages: dict[str, dict]) -> dict[int, dict]:
-    """Attach a TibiaWiki page to a client item only when that page lists the item's ID
-    (or one of its variants) and no other page competes for it, or exactly one competing
-    page has the same in-game name."""
+def wiki_claims(pages: dict[str, dict]) -> dict[int, list[dict]]:
     claims: dict[int, list[dict]] = {}
     for record in pages.values():
         for cid in record.get("itemids", []):
             claims.setdefault(cid, []).append(record)
+    return claims
+
+
+def match_wiki_pages(items_by_id: dict[int, dict], pages: dict[str, dict]) -> dict[int, dict]:
+    """Attach a TibiaWiki page to a client item only when that page lists the item's ID
+    (or one of its variants) and no other page competes for it, or exactly one competing
+    page has the same in-game name."""
+    claims = wiki_claims(pages)
     matched: dict[int, dict] = {}
     for cid, item in items_by_id.items():
         candidates = {r["title"]: r for i in [cid, *item.get("variants", [])] for r in claims.get(i, [])}
         if len(candidates) > 1:
-            name = item["name"].lower()
-            candidates = {t: r for t, r in candidates.items() if (r.get("actualname") or t).lower() == name}
+            name = name_key(item["name"])
+            candidates = {t: r for t, r in candidates.items() if name in page_names(r)}
         if len(candidates) == 1:
             matched[cid] = next(iter(candidates.values()))
     return matched
+
+
+def client_id_statuses(items_by_id: dict[int, dict], pages: dict[str, dict]) -> dict[int, tuple[str, list[str]]]:
+    """For each client item: (reason code, titles of wiki pages that name its ID differently)."""
+    claims = wiki_claims(pages)
+    out: dict[int, tuple[str, list[str]]] = {}
+    for cid, item in items_by_id.items():
+        claimants = {r["title"]: r for i in [cid, *item.get("variants", [])] for r in claims.get(i, [])}
+        if not claimants:
+            out[cid] = (OK_CLIENT_ONLY, [])
+        elif any(name_key(item["name"]) in page_names(r) for r in claimants.values()):
+            out[cid] = (OK_CLIENT_AND_WIKI, [])
+        else:
+            out[cid] = (WIKI_NAME_CONFLICT, sorted(claimants))
+    return out
+
+
+def reference_problems(items_by_id: dict[int, dict]) -> list[str]:
+    """Check known items; any mismatch means the client data was not read correctly."""
+    if not items_by_id:
+        return []
+    problems = []
+    for cid, expected in REFERENCE_ITEMS.items():
+        actual = items_by_id.get(cid, {}).get("name")
+        if actual is None or name_key(actual) != name_key(expected):
+            problems.append(_("ID {id} should be “{expected}” but is {actual}.").format(
+                id=cid, expected=expected, actual=f"“{actual}”" if actual else _("missing")))
+    return problems
 
 
 class Library:
@@ -127,15 +220,38 @@ class Library:
     def set_catalog(self, catalog: dict | None) -> None:
         self.catalog = catalog or {"source": None, "items": {}}
         self.items_by_id: dict[int, dict] = {int(k): v for k, v in self.catalog["items"].items()}
-        self.ids_by_name: dict[str, list[int]] = {}
+        self.ids_by_name: dict[str, list[int]] = {}  # keyed by name_key()
         for cid, item in self.items_by_id.items():
-            self.ids_by_name.setdefault(item["name"].lower(), []).append(cid)
-        self.wiki_by_id = match_wiki_pages(self.items_by_id, self.wiki_index["pages"])
+            self.ids_by_name.setdefault(name_key(item["name"]), []).append(cid)
+        self.reference_issues = reference_problems(self.items_by_id)
+        self._match_wiki()
         self._resolve_delivery()
 
     def set_wiki_index(self, index: dict | None) -> None:
         self.wiki_index = index or {"source": None, "pages": {}}
-        self.wiki_by_id = match_wiki_pages(self.items_by_id, self.wiki_index["pages"])
+        self._match_wiki()
+
+    def _match_wiki(self) -> None:
+        pages = self.wiki_index["pages"]
+        self.wiki_by_id = match_wiki_pages(self.items_by_id, pages)
+        self.id_statuses = client_id_statuses(self.items_by_id, pages)
+
+    def client_id_status(self, client_id: int) -> str:
+        """Reason code for a Tibia item ID taken from the installed client."""
+        if client_id not in self.items_by_id:
+            return NO_CLIENT_DATA if not self.items_by_id else NOT_IN_CLIENT
+        if self.reference_issues:
+            return CLIENT_DATA_SUSPECT
+        return self.id_statuses.get(client_id, (OK_CLIENT_ONLY, []))[0]
+
+    def conflicting_pages(self, client_id: int) -> list[str]:
+        return self.id_statuses.get(client_id, ("", []))[1]
+
+    def _status_for(self, client_id: int | None, resolution: str) -> str:
+        """Combine a wiki→client resolution with the per-ID check; the stricter one wins."""
+        if client_id is None or MAPPING_STATE.get(resolution) != VERIFIED:
+            return resolution
+        return self.client_id_status(client_id)
 
     def set_delivery(self, delivery: dict | None) -> None:
         self.delivery = delivery or {"source": None, "items": {}}
@@ -163,7 +279,11 @@ class Library:
 
     def shares_name(self, client_id: int) -> bool:
         item = self.items_by_id.get(client_id)
-        return bool(item) and len(self.ids_by_name.get(item["name"].lower(), [])) > 1
+        return bool(item) and len(self.ids_by_name.get(name_key(item["name"]), [])) > 1
+
+    def same_name_ids(self, client_id: int) -> list[int]:
+        item = self.items_by_id.get(client_id)
+        return [i for i in self.ids_by_name.get(name_key(item["name"]), []) if i != client_id] if item else []
 
     def wiki_title(self, client_id: int) -> str | None:
         record = self.wiki_by_id.get(client_id)
@@ -205,7 +325,7 @@ class Library:
         for title, record in self.delivery["items"].items():
             cid, status = self.delivery_resolution[title]
             name = self.items_by_id[cid]["name"] if cid is not None else title
-            entry = Entry(wiki_key(title), name, cid, status, ORIGIN_DELIVERY_SOURCE, record)
+            entry = Entry(wiki_key(title), name, cid, self._status_for(cid, status), ORIGIN_DELIVERY_SOURCE, record)
             if entry.key in removed or (cid is not None and client_key(cid) in removed):
                 excluded.append(entry)
             else:
@@ -216,7 +336,7 @@ class Library:
             if cid in seen_ids:
                 continue
             seen_ids.add(cid)
-            status = VERIFIED if cid in self.items_by_id else NOT_IN_CLIENT
+            status = self.client_id_status(cid)
             active.append(Entry(client_key(cid), self.item_name(cid), cid, status, ORIGIN_DELIVERY_USER))
         return active, excluded
 
@@ -227,7 +347,7 @@ class Library:
         if self.state.accepted_follow_delivery:
             candidates.extend(self.delivery_entries()[0])
         for cid in self.state.accepted_extra:
-            status = VERIFIED if cid in self.items_by_id else NOT_IN_CLIENT
+            status = self.client_id_status(cid)
             candidates.append(Entry(client_key(cid), self.item_name(cid), cid, status, ORIGIN_MANUAL))
         active, excluded, seen = [], [], set()
         for entry in candidates:
@@ -334,19 +454,21 @@ class Library:
                 for kind, amount in ((NPC_PAYS, offer.get("npc_buys_for")), (NPC_CHARGES, offer.get("npc_sells_for"))):
                     if amount:
                         values.append(ItemValue(kind, amount, offer.get("currency") or "gold", label, None,
-                                                csrc.get("read_at"), detail=detail))
+                                                csrc.get("read_at"), detail=detail, authority=OFFICIAL_CLIENT))
         wiki = self.wiki_record_for(client_id, title)
         if wiki:
             for kind, amount in ((NPC_PAYS, wiki.get("npc_buys_for")), (NPC_CHARGES, wiki.get("npc_sells_for"))):
                 if amount:
                     values.append(ItemValue(kind, amount, "gold", _("TibiaWiki item page"), wiki.get("url"),
-                                            wiki.get("fetched_at"), as_of=wiki.get("page_timestamp")))
+                                            wiki.get("fetched_at"), as_of=wiki.get("page_timestamp"),
+                                            authority=COMMUNITY_WIKI))
         title = title or (self.delivery_title_for(client_id) if client_id is not None else None)
         record = self.delivery["items"].get(title) if title else None
         if record and record.get("npc_buy_price"):
             dsrc = self.delivery.get("source") or {}
             values.append(ItemValue(NPC_PAYS, record["npc_buy_price"], "gold", _("TibiaWiki Delivery Task page"),
-                                    dsrc.get("url"), dsrc.get("fetched_at"), as_of=dsrc.get("revision_timestamp")))
+                                    dsrc.get("url"), dsrc.get("fetched_at"), as_of=dsrc.get("revision_timestamp"),
+                                    authority=COMMUNITY_WIKI))
         return values
 
     def lookup_title_hint(self, client_id: int) -> str:

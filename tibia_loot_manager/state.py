@@ -28,6 +28,8 @@ class UserState:
     characterdata_dir: str | None = None
     character_labels: dict[str, str] = field(default_factory=dict)
     loot_list_limit: int | None = None  # no verified current client limit; user may set one
+    theme: str = "dark"  # "dark" or "light"
+    onboarded: bool = False  # first-run wizard completed
 
     schema_version: int = SCHEMA_VERSION
 

@@ -28,6 +28,7 @@ class ItemValue:
     as_of: str | None = None  # when the source says the value was current (e.g. wiki revision)
     world: str | None = None
     detail: str | None = None  # e.g. "Rashid, Darashia City"
+    authority: str | None = None  # a kind from sources.registry (official client, community wiki, estimate)
 
     def age_days(self, now: datetime | None = None) -> int | None:
         if not self.retrieved_at:
@@ -45,7 +46,11 @@ class ItemValue:
 
 
 class MarketValueProvider(Protocol):
-    """Extension point for a future market price source (per world)."""
+    """Extension point for a future market price source (per world).
+
+    Values from fansites must use ``authority=THIRD_PARTY_ESTIMATE`` and a
+    ``world``; no single provider is treated as authoritative.
+    """
 
     name: str
 

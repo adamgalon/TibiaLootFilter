@@ -15,7 +15,9 @@ def delivery(*rows):
             "wiki": {"itemids": ids, "actualname": None}} for t, ids in rows}}
 
 
-CATALOG = catalog((1, "buckle"), (2, "sliver"), (3, "book"), (4, "book"), (9, "gold coin"))
+# 3031/3035 are the reference items every real client has; without them the data counts as suspect.
+CATALOG = catalog((1, "buckle"), (2, "sliver"), (3, "book"), (4, "book"), (9, "gold nugget"),
+                  (3031, "gold coin"), (3035, "platinum coin"))
 DELIVERY = delivery(("Buckle", [1]), ("Sliver", [2]), ("Book", [3, 4]), ("Ghost Item", [77]), ("Nameless", []))
 
 
@@ -25,7 +27,7 @@ class ResolveTest(unittest.TestCase):
 
     def test_statuses(self):
         r = self.lib.delivery_resolution
-        self.assertEqual(r["Buckle"], (1, L.VERIFIED))
+        self.assertEqual(r["Buckle"], (1, L.OK_CLIENT_AND_WIKI))
         self.assertEqual(r["Book"], (None, L.AMBIGUOUS))  # two client items named "book" both listed
         self.assertEqual(r["Ghost Item"], (None, L.NOT_IN_CLIENT))
         self.assertEqual(r["Nameless"], (None, L.NO_WIKI_ID))

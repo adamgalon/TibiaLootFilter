@@ -14,6 +14,20 @@ Evaluated on 2026-10-03 against Tibia client 15.33.df9fa3.
 | [Official Quick Loot guide](https://www.tibia.com/gameguides/?section=controls&subtopic=manual) | Linked | User workflow (Cyclopedia) | Linked from the Copy & export tab. |
 | [PCGamingWiki](https://www.pcgamingwiki.com/wiki/Tibia), [TibiaQA](https://www.tibiaqa.com/3985/how-transfer-edit-characters-loot-list-without-the-need-log-the-character), [TibiaBR forum](https://forums.tibiabr.com/threads/512965-Feedback-Quick-Looting) | Leads only | File location and older JSON examples | The format is checked against the user's own files instead. |
 
+## Source types
+
+Every source and every value is labelled with one type, and the types are never mixed:
+
+| Type | Sources | Treated as |
+| --- | --- | --- |
+| Official client data | Installed Tibia client | Authoritative for Tibia item IDs, names and NPC offers in that client version |
+| Official Tibia website | Quick Loot guide | Linked for instructions; no data is downloaded |
+| Community wiki | TibiaWiki pages and the item index | Usually accurate but community-maintained; cross-checked against the client |
+| Third-party estimate | (none configured) | Estimates that vary by world; never authoritative |
+
+Each source's last successful update and last error are recorded in `source_log.json` and shown on the Data sources
+tab. Each value records its source, type, retrieval time and, for market data, the world.
+
 ## Market values
 
 No dependable market source per world was found among the sources above, so the app shows no market values.

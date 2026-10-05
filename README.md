@@ -9,10 +9,22 @@ details, and never uploads your Tibia files.
 
 ## Running it
 
-Requires Windows 10 or 11 with Microsoft Edge (built in) and Python 3.11+ from python.org. There are no third-party
-packages.
+**Portable version (no Python needed):** unzip `TibiaLootManager-<version>.zip` and double-click
+`Start Tibia Loot List Manager.cmd`. It needs Windows 10 or 11 with Microsoft Edge (built in).
 
+To build that zip yourself:
+
+```powershell
+python tools/build_portable.py   # writes dist/TibiaLootManager-<version>/ and .zip
 ```
+
+The builder downloads Python's official embeddable runtime (the same version as the Python running the builder) from
+python.org. It checks the download against the SHA-256 that python.org publishes, adds the app, and zips the
+result.
+
+**From source:** Python 3.11+ from python.org. There are no third-party packages.
+
+```powershell
 python -m tibia_loot_manager      # or double-click TibiaLootManager.pyw
 python -m unittest discover -s tests -t .
 ```
@@ -34,8 +46,9 @@ internet: the Inter font (OFL) and Phosphor icons (MIT) are bundled in `web/vend
 - `webui/server.py`: a small HTTP server on `127.0.0.1` only. Every API call must carry a random per-launch token,
   and the `Host` header is checked, so web pages and other programs can't use it. Static files carry a strict
   Content-Security-Policy.
-- `webui/main.py`: opens the window with Edge in app mode (`msedge --app`). It shows native Windows file dialogs
-  through a hidden Tk window, and exits when the window closes.
+- `webui/main.py`: opens the window with Edge in app mode (`msedge --app`) and exits when the window closes.
+- `webui/native_dialogs.py`: the Windows Explorer file and folder dialogs, called through COM with `ctypes`. There
+  is no Tk, so the embeddable runtime of the portable version works.
 
 The theme follows your choice (dark or light, toggled in the sidebar) and is remembered.
 

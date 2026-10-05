@@ -48,6 +48,11 @@ RELEASE_NOTES = [
     ("0.5.0", "2026-10-05", [
         _("Profiles: separate Accepted Loot lists with history, compare, and import/export."),
         _("Weekly Tasks: track required, collected and remaining amounts for this week's Delivery Tasks."),
+        _("Hunt reports: when several items share a looted name, pick the right one before it counts; the pick is "
+          "remembered."),
+        _("Installing or restoring when the app can't tell whether Tibia is running now needs an explicit "
+          "“I've closed Tibia”."),
+        _("First-run setup can start from a strictness level."),
         _("Strictness levels: fill a profile from ready-made tiers, Soft to Uber+1 Strict, with a preview of every "
           "change. New prices update a level only after you review them."),
         _("Catalog: favorites, saved searches, and adding or removing everything a search matches at once."),

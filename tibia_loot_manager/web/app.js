@@ -80,7 +80,7 @@ const S = {
   help: { data: null, open: 2 },
   week: { data: null, q: '', results: [], pick: null, required: '' },
   hunt: { text: '', analysis: null, list: [] },
-  onb: { step: 1, info: null, startFull: true },
+  onb: { step: 1, info: null, start: 'delivery', level: 'strict' },
 };
 
 const SCREENS = [
@@ -266,18 +266,20 @@ function viewOnboarding() {
       </div>
       <p style="font-size:12.5px;color:var(--muted);margin-top:12px">Started from the commonly reported location. If it is wrong, choose the folder yourself.</p>`;
   } else {
-    const opt = (full, title, desc, tag) => html`
-      <div class="choice ${o.startFull === full ? 'on' : ''}" data-act="onb-start" data-full="${full ? 1 : 0}" role="radio" aria-checked="${o.startFull === full}" tabindex="0" style="padding:16px">
-        <i class="${o.startFull === full ? 'ph-fill ph-radio-button' : 'ph ph-circle'} pick" style="font-size:20px"></i>
-        <div><div style="font-weight:500">${title} ${tag ? html`<span class="tag tag-accent" style="margin-left:6px">${tag}</span>` : ''}</div><div style="font-size:13px;color:var(--muted);margin-top:4px">${desc}</div></div>
+    const opt = (key, title, desc, tag, extra = '') => html`
+      <div class="choice ${o.start === key ? 'on' : ''}" data-act="onb-start" data-v="${key}" role="radio" aria-checked="${o.start === key}" tabindex="0" style="padding:16px">
+        <i class="${o.start === key ? 'ph-fill ph-radio-button' : 'ph ph-circle'} pick" style="font-size:20px"></i>
+        <div style="flex:1"><div style="font-weight:500">${title} ${tag ? html`<span class="tag tag-accent" style="margin-left:6px">${tag}</span>` : ''}</div><div style="font-size:13px;color:var(--muted);margin-top:4px">${desc}</div>${extra}</div>
       </div>`;
     body = html`
       <div class="card-kicker" style="font-size:11px;margin-bottom:10px">Step 3 of 3</div>
       <h1 style="font-size:30px;margin:0 0 10px">Choose a starting list</h1>
       <p style="font-size:14px;color:var(--muted);max-width:540px">You can change this at any time. Your edits are kept separately from the source list.</p>
       <div style="display:grid;gap:10px;margin-top:16px">
-        ${opt(true, 'All Delivery Task items', `${num(info.delivery_items)} items from TibiaWiki’s Delivery Task page, revised ${fmtDate(info.delivery_revised, false)}.` + (info.delivery_blocked ? ` ${info.delivery_blocked} cannot be matched to a client ID yet and will be left out of exports.` : ' All of them match a verified client ID.'), 'Recommended')}
-        ${opt(false, 'Start empty', 'Add items one by one from the catalog.')}
+        ${opt('delivery', 'All Delivery Task items', `${num(info.delivery_items)} items from TibiaWiki’s Delivery Task page, revised ${fmtDate(info.delivery_revised, false)}.` + (info.delivery_blocked ? ` ${info.delivery_blocked} cannot be matched to a client ID yet and will be left out of exports.` : ' All of them match a verified client ID.'), 'Recommended')}
+        ${info.levels && info.levels.length ? opt('level', 'A strictness level, plus Delivery Task items', 'A ready-made list by item value (the highest NPC price, or Market category when no NPC buys it). You can change the level later on My Accepted Loot.', '',
+          o.start === 'level' ? html`<select class="input" data-change="onb-level" style="margin-top:10px;width:auto;min-height:32px;padding:4px 8px" aria-label="Strictness level">${info.levels.map(l => html`<option value="${l.id}" ${raw(o.level === l.id ? 'selected' : '')}>${l.name} · ${num(l.count)} items</option>`)}</select>` : '') : ''}
+        ${opt('empty', 'Start empty', 'Add items one by one from the catalog.')}
       </div>`;
   }
   return html`
@@ -342,7 +344,7 @@ function viewCatalog() {
           <option value="">All categories</option>
           ${a.categories.map(k => html`<option value="${k}" ${raw(c.cat === k ? 'selected' : '')}>${k}</option>`)}
         </select>
-        <span style="margin-left:auto;font-size:12px;color:var(--muted)">${c.rows.length < c.total ? `${num(c.rows.length)} of ${num(c.total)}` : num(c.total)} items</span>
+        <span id="cat-count" style="margin-left:auto;font-size:12px;color:var(--muted)">${catCount(c)}</span>
       </div>
       ${viewCatalogTools()}
       <div class="cat-grid rule-strong" style="padding:8px 10px" role="row">
@@ -355,21 +357,22 @@ function viewCatalog() {
 }
 
 const catFiltered = c => !!(c.q.trim() || c.seg !== 'all' || c.cat || c.idf !== 'all');
+const catCount = c => `${c.rows.length < c.total ? `${num(c.rows.length)} of ${num(c.total)}` : num(c.total)} items`;
 const searchOf = c => ({ q: c.q, seg: c.seg, cat: c.cat, idf: c.idf });
 
 function viewCatalogTools() {
   const c = S.cat, saved = S.app.saved_searches || [];
   const isCurrent = s => s.q === c.q.trim() && s.seg === c.seg && s.cat === c.cat && s.idf === c.idf;
   const filtered = catFiltered(c);
-  if (!saved.length && !filtered) return '';
-  return html`<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:-2px 0 10px">
+  if (!saved.length && !filtered) return html`<div id="cat-tools"></div>`;
+  return html`<div id="cat-tools" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:-2px 0 10px">
     ${saved.map((s, i) => html`<span class="chip saved-chip ${isCurrent(s) ? 'on' : ''}">
       <button class="saved-apply" data-act="search-apply" data-v="${i}" title="Apply this saved search">${icon('bookmark-simple')}${s.name}</button>
       <button class="saved-x" data-act="search-delete" data-v="${s.name}" title="Delete saved search" aria-label="Delete saved search ${s.name}">${icon('x')}</button></span>`)}
     ${filtered && !saved.some(isCurrent) ? html`<button class="chip" data-act="search-save-open" style="display:inline-flex;align-items:center;gap:5px">${icon('plus')}Save this search</button>` : ''}
     ${filtered && c.total ? html`<span style="margin-left:auto;display:flex;gap:4px">
-      <button class="btn btn-ghost" data-act="bulk" data-v="add" style="font-size:12.5px;padding:3px 8px;min-height:28px">${icon('list-plus')}Add all to my list</button>
-      <button class="btn btn-ghost" data-act="bulk" data-v="remove" style="font-size:12.5px;padding:3px 8px;min-height:28px">${icon('minus-circle')}Remove all</button></span>` : ''}
+      <button class="btn btn-ghost" data-act="bulk" data-v="add" style="font-size:12.5px;padding:3px 8px;min-height:28px">${icon('list-plus')}Add all to Accepted Loot</button>
+      <button class="btn btn-ghost" data-act="bulk" data-v="remove" style="font-size:12.5px;padding:3px 8px;min-height:28px">${icon('minus-circle')}Remove all from Accepted Loot</button></span>` : ''}
   </div>`;
 }
 
@@ -468,7 +471,8 @@ function viewDelivery() {
   return html`
   <div class="page" style="max-width:1080px">
     <div style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
-      <div style="flex:1;min-width:280px"><h1>Delivery Task list</h1><div class="page-sub">Items a Delivery Task can request. Source list with your edits applied.</div></div>
+      <div style="flex:1;min-width:280px"><h1>Delivery Task list</h1><div class="page-sub">Items a Delivery Task can request. Source list with your edits applied.</div>
+        <div class="scope-note">${icon('users-three')}Shared by all profiles: edits here change the Delivery Task list for every profile.</div></div>
       <button class="btn btn-secondary" data-act="del-defaults">${icon('arrow-counter-clockwise')}Restore source defaults</button>
     </div>
     <div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin:18px 0 14px;font-size:12.5px;color:var(--muted)">
@@ -573,8 +577,9 @@ function viewLevels(d) {
   return html`<div class="level-panel">
     <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
       <h6 style="margin:0">Strictness level</h6>
-      <span style="font-size:12.5px;color:var(--muted)">Start the list from a ready-made level, softest to strictest. Items you add or remove yourself always stay on top.</span>
+      <span style="font-size:12.5px;color:var(--muted)">Ready-made lists, softest to strictest. Your changes override the level.</span>
     </div>
+    <div style="font-size:12px;color:var(--muted);margin-top:-4px">Based on the highest price an NPC pays in your installed client, or the item’s Market category when no NPC buys it. Not Market prices, your world or your hunting habits. Each item’s tier is shown in the catalog.</div>
     <div class="level-track" role="group" aria-label="Strictness level">
       ${opt('', 'None', null, 'off')}
       ${L.levels.map(l => opt(l.id, l.name, l.count))}
@@ -609,7 +614,7 @@ function viewWeekly() {
   return html`
   <div class="page" style="max-width:1080px">
     <h1>Weekly Tasks</h1>
-    <div class="page-sub">Week of ${fmtDate(d.week_start, false)} · resets at server save ${fmtDate(d.next_reset)} (${days === 0 ? 'today' : plural(days, 'day', 'days')})</div>
+    <div class="page-sub">Week of ${fmtDate(d.week_start, false)} · resets at Monday’s server save, 10:00 German time: ${fmtDate(d.next_reset)} your time (${days === 0 ? 'today' : plural(days, 'day', 'days')})</div>
     ${d.new_week ? html`<div class="note" style="margin-top:14px">${icon('calendar-check', 'class="accent"')}<div>A new week started at Monday’s server save. Last week’s tasks were moved to <b>Previous weeks</b> below.</div></div>` : ''}
     <div style="display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin:22px 0 6px">
       <span style="font-size:44px;font-weight:500;letter-spacing:-.02em;line-height:1">${num(done)}<span class="muted" style="font-size:28px"> / ${num(d.tasks.length)}</span></span>
@@ -676,15 +681,19 @@ function viewHunts() {
         <button class="btn btn-secondary" data-act="hunt-paste">${icon('clipboard-text')}Paste from clipboard</button>
         <button class="btn btn-primary" data-act="hunt-analyze" ${raw(h.text.trim() ? '' : 'disabled')}>${icon('chart-bar')}Analyze</button>
       </div>
+      <div style="font-size:12px;color:var(--muted)">${icon('hard-drives')} Analyzed sessions are saved on this PC (the last 30) so you can open them again. Delete any of them below.</div>
     </div>
     ${a ? html`
       <div class="stat-row">
         ${stat('Session', s.duration || '—', s.from ? 'from ' + s.from : '')}
         ${stat('XP gain', num(s.xp))}
         ${stat('Loot (reported)', gp(s.loot), 'by the game’s own prices')}
-        ${stat('NPC value', gp(a.npc_total), a.unpriced ? `${plural(a.unpriced, 'item', 'items')} without an NPC price` : 'what NPCs pay')}
+        ${stat('NPC value', gp(a.npc_total), [a.unpriced ? `${plural(a.unpriced, 'item', 'items')} without an NPC price` : '', a.uncertain ? `${num(a.uncertain)} not counted until picked` : ''].filter(Boolean).join(' · ') || 'what NPCs pay')}
         ${stat('Balance', gp(s.balance), s.supplies !== null ? 'supplies ' + gp(s.supplies) : '')}
       </div>
+      ${a.uncertain ? html`<div class="note warn-bg" style="margin:14px 0">${icon('question', 'class="warn"')}
+        <div><div style="font-weight:500;margin-bottom:3px">${plural(a.uncertain, 'looted item shares', 'looted items share')} a name with other items</div>
+        <div class="muted">Pick the right one in the list below. Until you do, ${a.uncertain === 1 ? 'it isn’t' : 'they aren’t'} counted in the NPC value or Weekly Tasks. Your pick is remembered for future reports.</div></div></div>` : ''}
       ${a.task_rows ? html`<div class="note" style="margin:14px 0">${icon('calendar-check', 'class="accent"')}
         <div style="flex:1"><div style="font-weight:500;margin-bottom:3px">${plural(a.task_rows, 'looted item counts', 'looted items count')} toward this week’s tasks</div>
         <div class="muted">${a.applied_this_week ? 'Already added to this week’s tasks.' : 'Add the looted amounts to your Weekly Tasks progress.'}</div></div>
@@ -694,13 +703,17 @@ function viewHunts() {
         <tbody>${a.rows.map(r => html`<tr>
           <td>${spriteSlot(r.id, 28)}</td>
           <td>${r.name || r.line}
-            ${r.how === 'chosen' ? html`<span class="tag tag-unverified tag-sm" title="Several items share this name; the most likely one was chosen" style="margin-left:6px">uncertain</span>` : ''}
+            ${r.uncertain ? html`<span class="tag tag-unverified tag-sm" style="margin-left:6px">pick one</span>` : ''}
+            ${r.candidates.length ? html`<div><select class="input pick-select" data-change="hunt-choose" data-line="${r.line}" aria-label="Which ${r.line}?">
+              ${r.uncertain ? html`<option value="" selected>Which one? Not counted yet</option>` : ''}
+              ${r.candidates.map(c => html`<option value="${c.id}" ${raw(!r.uncertain && c.id === r.id ? 'selected' : '')}>${c.wiki || r.name} · ID ${c.id} · ${c.category}${c.each ? ' · NPC pays ' + num(c.each) + ' gp' : ''}${c.in_delivery ? ' · Delivery Task' : ''}</option>`)}
+            </select></div>` : ''}
             ${r.id === null ? html`<span class="tag tag-conflicting tag-sm" style="margin-left:6px">not matched</span>` : ''}
             ${r.task ? html`<span class="tag tag-accent tag-sm" style="margin-left:6px">Task · ${num(r.task.remaining)} left</span>` : ''}</td>
           <td class="mono" style="text-align:right">${num(r.count)}</td>
-          <td class="mono" style="text-align:right;color:${r.each ? 'var(--color-text)' : 'var(--muted)'}">${r.each ? gp(r.each) : '—'}</td>
-          <td class="mono" style="text-align:right">${r.value ? gp(r.value) : '—'}</td>
-          <td>${r.id === null || r.coin ? '' : r.in_accepted ? html`<span class="ok" style="font-size:13px">${icon('check')} On the list</span>`
+          <td class="mono" style="text-align:right;color:${r.each && !r.uncertain ? 'var(--color-text)' : 'var(--muted)'}">${r.each ? gp(r.each) : '—'}</td>
+          <td class="mono" style="text-align:right;${r.uncertain ? 'color:var(--muted);text-decoration:line-through' : ''}" ${raw(r.uncertain ? 'title="Not counted until you pick the item"' : '')}>${r.value ? gp(r.value) : '—'}</td>
+          <td>${r.id === null || r.coin || r.uncertain ? '' : r.in_accepted ? html`<span class="ok" style="font-size:13px">${icon('check')} On the list</span>`
             : html`<button class="btn btn-ghost" data-act="hunt-accept" data-key="${r.id}" style="font-size:13px;padding-inline:8px">${icon('plus')}Add</button>`}</td>
         </tr>`)}</tbody>
       </table>
@@ -1117,7 +1130,8 @@ function viewInstallModal(m) {
     ${p.blocked.length ? html`<div style="font-size:12.5px;color:var(--muted)">${icon('warning', 'class="warn"')} Not installed (ID unverified or conflicting): ${p.blocked.slice(0, 8).join(', ')}${p.blocked.length > 8 ? '…' : ''}</div>` : ''}
     ${p.also_skipped.length ? html`<div style="font-size:12.5px;color:var(--muted)">${num(p.also_skipped.length)} item(s) are also on the Skipped list (${p.also_skipped.slice(0, 5).join(', ')}). In Accepted Loot mode the Skipped list is not used.</div>` : ''}
     <div style="display:grid;gap:8px;font-size:12.5px">
-      <div style="display:flex;gap:8px;align-items:center">${p.tibia_running ? html`${icon('warning-circle', 'class="bad" style="font-size:16px"')}<span><b>Tibia is running.</b> Close the game yourself, then check again. The app never closes it for you.</span>` : p.tibia_unknown ? html`${icon('warning', 'class="warn" style="font-size:16px"')}<span>Couldn’t check whether Tibia is running. Make sure the game is closed before installing.</span>` : html`${icon('check-circle', 'class="ok" style="font-size:16px"')}Tibia is not running`}</div>
+      <div style="display:flex;gap:8px;align-items:center">${p.tibia_running ? html`${icon('warning-circle', 'class="bad" style="font-size:16px"')}<span><b>Tibia is running.</b> Close the game yourself, then check again. The app never closes it for you.</span>` : p.tibia_unknown ? html`${icon('warning', 'class="warn" style="font-size:16px"')}<span>Couldn’t check whether Tibia is running. Installing while it runs can lose the change: the game rewrites the file when it exits.</span>` : html`${icon('check-circle', 'class="ok" style="font-size:16px"')}Tibia is not running`}</div>
+      ${p.tibia_unknown ? closedCheck(m) : ''}
       <div style="display:flex;gap:8px;align-items:flex-start">${icon('floppy-disk', 'class="accent" style="font-size:16px"')}<span>Backup first to <span class="mono">${p.backup_dir}</span></span></div>
       <div style="display:flex;gap:8px;align-items:center">${icon('arrows-counter-clockwise', 'class="accent" style="font-size:16px"')}The file is read back after writing. If it doesn’t match, the backup is restored.</div>
       ${p.limit.warn ? html`<div style="display:flex;gap:8px;align-items:center" class="warn">${icon('gauge', 'style="font-size:16px"')}${p.limit.text}</div>` : ''}
@@ -1125,9 +1139,11 @@ function viewInstallModal(m) {
     <div class="dialog-actions">
       <button class="btn btn-secondary" data-act="modal-close">Cancel</button>
       ${p.tibia_running ? html`<button class="btn btn-primary" data-act="install-preview">${icon('arrows-clockwise')}Check again</button>`
-        : html`<button class="btn btn-primary" data-act="install-apply" ${raw(S.busy ? 'disabled' : '')} data-autofocus>Back up and install</button>`}
+        : html`<button class="btn btn-primary" data-act="install-apply" ${raw(S.busy || (p.tibia_unknown && !m.closed) ? 'disabled' : '')} data-autofocus>Back up and install</button>`}
     </div></div>`;
 }
+
+const closedCheck = m => html`<label class="closed-check"><input type="checkbox" data-change="tibia-closed" ${raw(m.closed ? 'checked' : '')}>I’ve closed Tibia</label>`;
 
 function viewRestoreModal(m) {
   const p = m.preview;
@@ -1141,9 +1157,10 @@ function viewRestoreModal(m) {
       <span class="k">Skipped</span><span class="mono">${plural(p.skipped, 'item', 'items')}</span>
     </div>
     <div style="font-size:12.5px;color:var(--muted)">The current file is backed up before restoring, so this can be undone too. Close Tibia first; the app won’t close it for you.</div>
-    ${p.tibia_running ? html`<div style="font-size:12.5px" class="bad">Tibia is running. Close it, then try again.</div>` : p.tibia_unknown ? html`<div style="font-size:12.5px" class="warn">Couldn’t check whether Tibia is running. Make sure it’s closed.</div>` : ''}
+    ${p.tibia_running ? html`<div style="font-size:12.5px" class="bad">Tibia is running. Close it yourself, then check again.</div>` : p.tibia_unknown ? html`<div style="font-size:12.5px" class="warn">Couldn’t check whether Tibia is running. Restoring while it runs can lose the change.</div>${closedCheck(m)}` : ''}
     <div class="dialog-actions"><button class="btn btn-secondary" data-act="modal-close">Cancel</button>
-      <button class="btn btn-primary" data-act="restore-apply" data-autofocus>Restore</button></div></div>`;
+      ${p.tibia_running ? html`<button class="btn btn-primary" data-act="restore-recheck">${icon('arrows-clockwise')}Check again</button>`
+        : html`<button class="btn btn-primary" data-act="restore-apply" ${raw(p.tibia_unknown && !m.closed ? 'disabled' : '')} data-autofocus>Restore</button>`}</div></div>`;
 }
 
 function viewReportModal(m) {
@@ -1262,11 +1279,11 @@ const ACTIONS = {
   'onb-next': async () => {
     const o = S.onb;
     if (o.step < 3) { o.step += 1; await guard(async () => { o.info = await get('onboarding'); }); render(); return; }
-    const done = await guard(async () => { await post('onboarding/finish', { start_full: o.startFull }); await loadState(); return true; }, 'Finish setup');
+    const done = await guard(async () => { await post('onboarding/finish', { start_full: o.start !== 'empty', level: o.start === 'level' ? o.level : '' }); await loadState(); return true; }, 'Finish setup');
     if (done) await go('accepted');
   },
   'onb-back': () => { S.onb.step = Math.max(1, S.onb.step - 1); render(); },
-  'onb-start': el => { S.onb.startFull = el.dataset.full === '1'; render(); },
+  'onb-start': (el, e) => { if (e && e.target.closest('select')) return; S.onb.start = el.dataset.v; render(); },
 
   // catalog
   'cat-seg': async el => { S.cat.seg = el.dataset.v; await guard(() => loadCatalog()); render(); },
@@ -1392,7 +1409,7 @@ const ACTIONS = {
   'install-apply': async () => {
     S.busy = true; render();
     try {
-      const r = await post('install/apply', { folder: S.ins.selected, mode: S.ins.mode });
+      const r = await post('install/apply', { folder: S.ins.selected, mode: S.ins.mode, closed: !!S.modal.closed });
       S.modal = null;
       toast(`Installed and verified ${num(r.count)} Accepted Loot items.` + (r.backup ? ` Backup: ${r.backup}` : ' (No previous file to back up.)'));
       await LOADERS.install();
@@ -1400,9 +1417,10 @@ const ACTIONS = {
     S.busy = false; render();
   },
   'restore-open': el => guard(async () => { const preview = await post('restore/preview', { folder: S.ins.selected, file: el.dataset.file }); S.modal = { kind: 'restore', preview }; render(); }, 'Preview backup restore'),
+  'restore-recheck': () => guard(async () => { const p = S.modal.preview; S.modal = { kind: 'restore', preview: await post('restore/preview', { folder: p.folder, file: p.file }) }; render(); }, 'Check whether Tibia is running'),
   'restore-apply': async () => {
     const p = S.modal.preview;
-    try { await post('restore/apply', { folder: p.folder, file: p.file }); S.modal = null; toast('The backup was restored and verified.'); await LOADERS.install(); render(); }
+    try { await post('restore/apply', { folder: p.folder, file: p.file, closed: !!S.modal.closed }); S.modal = null; toast('The backup was restored and verified.'); await LOADERS.install(); render(); }
     catch (e) { showError(e, 'Restore loot-list backup'); }
   },
 
@@ -1543,6 +1561,13 @@ const CHANGES = {
   'profile-char': el => { S.modal.char = el.value; },
   'profile-cmp-a': el => { S.modal.cmpA = el.value; },
   'profile-cmp-b': el => { S.modal.cmpB = el.value; },
+  'onb-level': el => { S.onb.level = el.value; },
+  'tibia-closed': el => { S.modal.closed = el.checked; render(); },
+  'hunt-choose': async el => {
+    if (!el.value) return;
+    await guard(async () => { await post('hunts/choose', { line: el.dataset.line, id: +el.value }); S.hunt.analysis = await get('hunts/open', { id: S.hunt.analysis.id }); }, 'Pick the looted item');
+    render();
+  },
   'cat-cat': async el => { S.cat.cat = el.value; await guard(() => loadCatalog()); render(); },
   'exp-sort': async el => { S.exp.sort = el.value; await guard(LOADERS.export); render(); },
   'exp-ids': async el => { S.exp.ids = el.checked; await guard(LOADERS.export); render(); },
@@ -1576,8 +1601,11 @@ const INPUTS = {
     searchTimer = setTimeout(async () => {
       await guard(() => loadCatalog());
       const list = document.getElementById('cat-list');
+      // Redraw the parts that depend on the search, but not the search box (it keeps focus while typing).
       if (list && S.screen === 'catalog') { list.innerHTML = val(viewCatalogRows()); list.scrollTop = 0;
-        const aside = document.querySelector('.detail'); if (aside) aside.outerHTML = val(viewDetail()); }
+        const aside = document.querySelector('.detail'); if (aside) aside.outerHTML = val(viewDetail());
+        const tools = document.getElementById('cat-tools'); if (tools) tools.outerHTML = val(viewCatalogTools());
+        const count = document.getElementById('cat-count'); if (count) count.textContent = catCount(S.cat); }
     }, 220);
   },
   'rep-preview': el => { S.modal.preview = el.value; S.modal.previewEdited = true; S.modal.dirty = true;

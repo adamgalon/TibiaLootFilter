@@ -80,6 +80,37 @@ class HuntServiceTest(unittest.TestCase):
         with self.assertRaises(UserError):
             self.svc.hunt_analyze("hello world")
 
+    def add_second_buckle(self):
+        """A second object called "buckle" (as with real duplicate names in the client)."""
+        lib = self.svc.library
+        lib.items_by_id[99001] = {"id": 99001, "name": "buckle", "category": "Others", "npc_offers": []}
+        lib.ids_by_name.setdefault("buckle", []).append(99001)
+
+    def test_uncertain_match_is_not_counted_until_picked(self):
+        self.add_second_buckle()
+        self.svc.weekly_add("wiki:Buckle", 10)
+        a = self.svc.hunt_analyze(REPORT)
+        row = next(r for r in a["rows"] if r["line"] == "buckles")
+        self.assertTrue(row["uncertain"])
+        self.assertEqual([c["id"] for c in row["candidates"]], [17829, 99001])  # likeliest first
+        self.assertIsNone(row["task"])
+        self.assertEqual((a["npc_total"], a["uncertain"], a["task_rows"]), (450, 1, 0))
+        with self.assertRaises(UserError):
+            self.svc.hunt_choose("buckles", 3031)  # not one of the candidates
+        self.svc.hunt_choose("buckles", 17829)
+        a = self.svc.hunt_open(a["id"])
+        row = next(r for r in a["rows"] if r["line"] == "buckles")
+        self.assertEqual((row["uncertain"], row["how"], row["id"]), (False, "picked", 17829))
+        self.assertEqual(a["task_rows"], 1)
+        self.assertEqual(a["npc_total"], 450 + 3 * row["each"] if row["each"] else 450)
+
+    def test_pick_is_remembered_for_the_name(self):
+        self.add_second_buckle()
+        self.svc.hunt_choose("buckles", 99001)
+        a = self.svc.hunt_analyze(REPORT.replace("3x buckles", "7x buckles"))
+        row = next(r for r in a["rows"] if r["line"] == "buckles")
+        self.assertEqual((row["id"], row["uncertain"]), (99001, False))
+
     def test_apply_to_weekly_tasks_once(self):
         self.svc.weekly_add("wiki:Buckle", 10)
         a = self.svc.hunt_analyze(REPORT)

@@ -75,7 +75,7 @@ This approach was chosen over a web source such as TibiaWiki's GIFs because:
 | Delivery Task list | The source candidate list with your edits applied. Excluded items stay visible under *Excluded by me*, and *Restore source defaults* discards your edits. |
 | My Accepted Loot | Your personal list: the Delivery Task list (switchable) plus items you added minus items you removed. Shows the item count, the limit warning and unverified items. **Profiles** keep separate lists (for characters, hunts or goals): create, switch, rename, duplicate, compare, export or import them, or copy a character's in-game list. Every change is kept in the profile's **history** and any version can be restored. The Delivery Task list edits are shared by all profiles. **Strictness levels** (Soft, Regular, Semi-Strict, Strict, Very Strict, Uber Strict, Uber+1 Strict) fill a profile from ready-made tiers in one click; see [Strictness levels](#strictness-levels). |
 | Weekly Tasks | Track this week's Delivery Tasks: required, collected and remaining amounts, with quick +1/+5/+10 buttons. Warns when a task item isn't on your Accepted Loot list. The week resets at Monday's server save (10:00 German time) and earlier weeks are kept as a summary. |
-| Hunt reports | Paste a session from Tibia's Hunt Analyzer ("Copy to clipboard"). Shows the session totals, each looted item matched to its client ID with the best NPC buy price, items it couldn't match, and whether each item is on your Accepted Loot list (one click to add it). Looted amounts can be added to this week's tasks once per session. The last 30 sessions are kept in `hunts.json`. Only the pasted text is read. |
+| Hunt reports | Paste a session from Tibia's Hunt Analyzer ("Copy to clipboard"). Shows the session totals, each looted item matched to its client ID with the best NPC buy price, items it couldn't match, and whether each item is on your Accepted Loot list (one click to add it). When several items share a looted name (there are several "bag" objects, for example), the likeliest is shown, but it isn't counted in the NPC value or tasks until you pick the right one; the pick is remembered for later reports. Looted amounts can be added to this week's tasks once per session. The last 30 sessions are kept in `hunts.json`. Only the pasted text is read. |
 | Copy & export | A one-item-per-line checklist for adding items through the Cyclopedia, and a game-format file export. |
 | Install to character | Choose the character data folder, label the numbered folders, preview Merge or Replace, install with a backup, and restore backups. |
 | Data sources | Run *Check for updates*, see each source's type (official client data, community wiki, third-party estimate) and freshness, and set an optional list-size limit. |
@@ -148,8 +148,8 @@ How installing is kept safe:
 - *Merge* keeps the character's current Accepted items and adds yours. *Replace* sets the Accepted list to exactly
   yours and lists every item it will remove. Both modes switch `listType` to `whitelist` and leave the Skipped list as
   it is. The preview shows the mode change.
-- If Tibia is running, the app asks you to close it. It never closes the game itself. If it can't tell, it says so
-  and asks you to make sure.
+- If Tibia is running, installing and restoring are blocked until you close it. The app never closes the game
+  itself. If it can't tell whether Tibia is running, nothing is written until you tick **I've closed Tibia**.
 - Before writing, the app saves a timestamped backup to `%LOCALAPPDATA%\TibiaLootManager\backups\<folder>\`. The new
   content goes to a temporary file in the character's folder. That file is swapped in with a single atomic rename,
   so an interruption leaves the old file or the new one, never a partial one, and the temporary file never outlives

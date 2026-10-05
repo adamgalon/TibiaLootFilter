@@ -56,6 +56,7 @@ class UserState:
     # Catalog conveniences, shared by all profiles
     favorites: list[str] = field(default_factory=list)  # catalog row keys ("3031" or "wiki:Title")
     saved_searches: list = field(default_factory=list)  # [{"name", "q", "seg", "cat", "idf"}]
+    hunt_choices: dict[str, str] = field(default_factory=dict)  # looted-line name key -> client ID the user picked
 
     schema_version: int = SCHEMA_VERSION
 

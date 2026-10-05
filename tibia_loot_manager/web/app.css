@@ -173,6 +173,12 @@ button { font: inherit; }
 .task-num { width: 70px; min-height: 30px; padding: 3px 8px; text-align: right; }
 .task-step { padding: 4px 8px; font-size: 12.5px; min-width: 38px; }
 
+/* review fixes */
+.pick-select { width: auto; max-width: 100%; min-height: 28px; padding: 2px 8px; font-size: 12px; margin-top: 4px; }
+.closed-check { display: flex; gap: 8px; align-items: center; font-size: 13px; font-weight: 500; cursor: pointer; }
+.closed-check input { width: 16px; height: 16px; accent-color: var(--color-accent); }
+.scope-note { display: flex; gap: 6px; align-items: center; font-size: 12.5px; color: var(--muted); margin-top: 6px; }
+
 /* strictness levels */
 .level-panel { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; padding: 12px; border-radius: 8px; background: var(--color-surface); }
 .level-track { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 4px; }

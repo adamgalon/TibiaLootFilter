@@ -17,7 +17,7 @@ from ..help_content import FAQ, RELEASE_NOTES
 from ..i18n import _
 from ..library import (
     ID_STATUS_DETAIL, MAPPING_STATE, ORIGIN_DELIVERY_SOURCE, ORIGIN_DELIVERY_USER, ORIGIN_MANUAL, ORIGIN_PRESET,
-    STATE_TEXT, UNVERIFIED, VERIFIED, Entry, delivery_url,
+    STATE_TEXT, UNVERIFIED, VERIFIED, Entry, delivery_url, name_key,
 )
 from ..search import matches_search
 from ..sources import sprites, tibia_client, tibiawiki
@@ -219,12 +219,18 @@ class AppService:
                 "delivery_blocked": sum(not e.exportable for e in delivery),
                 "delivery_revised": dsrc.get("revision_timestamp"),
                 "follow_delivery": lib.state.accepted_follow_delivery,
+                "levels": [{"id": lid, "name": name, "count": len(strictness.level_ids(self._tier_map(), lid))}
+                           for lid, name, _low in strictness.LEVELS] if lib.items_by_id else [],
             }
 
-    def finish_onboarding(self, start_full: bool) -> dict:
+    def finish_onboarding(self, start_full: bool, level: str = "") -> dict:
         with self.lock:
-            self.library.state.accepted_follow_delivery = bool(start_full)
-            self.library.state.onboarded = True
+            self._check_level(level)
+            st = self.library.state
+            st.accepted_follow_delivery = bool(start_full)
+            st.accepted_preset = level
+            st.accepted_preset_items = strictness.level_ids(self._tier_map(), level) if level else []
+            st.onboarded = True
             self._save()
             self._accepted_changed(_("Starting list chosen"))
             return {}
@@ -880,22 +886,32 @@ class AppService:
             if entry and entry.client_id is not None:
                 tracked[entry.client_id] = t
         rows, total, unpriced = [], 0, 0
+        delivery = lib.delivery_ids()
         for line in report["items"]:
-            cid, how = hunts.match_item(line["name"], lib)
+            cid, how, candidates = hunts.match_item(line["name"], lib)
+            picked = lib.state.hunt_choices.get(name_key(line["name"]), "")
+            if how == "chosen" and picked.isdigit() and int(picked) in candidates:
+                cid, how = int(picked), "picked"
+            uncertain = how == "chosen"  # not counted anywhere until the user picks the item
             item = lib.items_by_id.get(cid) if cid is not None else None
             each = hunts.COIN_VALUES.get(cid) or (hunts.best_npc_price(item) if item else None)
             value = each * line["count"] if each else None
-            total += value or 0
-            unpriced += value is None and cid is not None
-            task = tracked.get(cid)
+            if not uncertain:
+                total += value or 0
+                unpriced += value is None and cid is not None
+            task = None if uncertain else tracked.get(cid)
             rows.append({"line": line["name"], "count": line["count"], "id": cid, "how": how,
-                         "name": item["name"] if item else None, "each": each, "value": value,
-                         "coin": cid in hunts.COIN_VALUES, "in_accepted": cid in accepted_ids,
+                         "uncertain": uncertain, "name": item["name"] if item else None, "each": each,
+                         "value": value, "coin": cid in hunts.COIN_VALUES, "in_accepted": cid in accepted_ids,
                          "task": {"name": task["name"], "remaining": max(0, task["required"] - task["collected"])}
-                         if task else None})
-        rows.sort(key=lambda r: -(r["value"] or 0))
+                         if task else None,
+                         "candidates": [{"id": c, "wiki": lib.wiki_title(c), "category": lib.items_by_id[c]["category"],
+                                         "each": hunts.best_npc_price(lib.items_by_id[c]), "in_delivery": c in delivery}
+                                        for c in candidates]})
+        rows.sort(key=lambda r: (r["uncertain"], -(r["value"] or 0)))
         return {"id": record["id"], "imported_at": record.get("imported_at"), "session": report,
                 "rows": rows, "npc_total": total, "unpriced": unpriced,
+                "uncertain": sum(r["uncertain"] for r in rows),
                 "unmatched": [r["line"] for r in rows if r["id"] is None],
                 "task_rows": sum(1 for r in rows if r["task"]),
                 "applied_this_week": record.get("applied_week") == self._week()["week_start"]}
@@ -913,6 +929,16 @@ class AppService:
                 records = ([record] + records)[:self.HUNTS_KEPT]
                 write_json_atomic(self._hunts_path(), records, indent=None)
             return self._analysis(record)
+
+    def hunt_choose(self, line: str, client_id: int) -> dict:
+        """Remember which of several same-named items a looted line means."""
+        with self.lock:
+            _cid, _how, candidates = hunts.match_item(line, self.library)
+            if client_id not in candidates:
+                raise UserError(_("That item doesn't match “{line}”.").format(line=line))
+            self.library.state.hunt_choices[name_key(line)] = str(client_id)
+            self._save()
+            return {}
 
     def hunt_list(self) -> dict:
         with self.lock:
@@ -1207,14 +1233,24 @@ class AppService:
                 "backup_dir": str(lootfile.backup_dir_for(self.store.backups, folder_id)),
             }
 
-    def install_apply(self, folder_id: str, mode: str) -> dict:
+    @staticmethod
+    def _require_closed(confirmed_closed: bool, running_text: str) -> None:
+        """Block game-file writes while Tibia runs; if that can't be checked, the user must say it's closed."""
+        status = tibia_status()
+        if status == RUNNING:
+            raise UserError(running_text)
+        if status == UNKNOWN and not confirmed_closed:
+            raise UserError(_("Couldn't check whether Tibia is running. Close the game, tick “I've closed Tibia”, "
+                              "then try again."))
+
+    def install_apply(self, folder_id: str, mode: str, confirmed_closed: bool = False) -> dict:
         with self.lock:
             pending = self._pending_install
             if not pending or pending[0].folder_id != folder_id or pending[1].mode != mode:
                 raise UserError(_("Please preview the installation again."))
-            if tibia_status() == RUNNING:
-                raise UserError(_("Tibia is running. Close the game yourself, then try again. The client keeps the "
-                                  "loot list in memory and can overwrite the file when it exits."))
+            self._require_closed(confirmed_closed, _(
+                "Tibia is running. Close the game yourself, then try again. The client keeps the loot list in "
+                "memory and can overwrite the file when it exits."))
             folder, plan = pending
             try:
                 result = lootfile.install(plan, folder, self.store.backups)
@@ -1247,10 +1283,9 @@ class AppService:
                     "mode": mode_text.get(data[lootfile.KEY_MODE]), "accepted": len(data[lootfile.KEY_ACCEPTED]),
                     "skipped": len(data[lootfile.KEY_SKIPPED]), **self._tibia_flags()}
 
-    def restore_apply(self, folder_id: str, file: str) -> dict:
+    def restore_apply(self, folder_id: str, file: str, confirmed_closed: bool = False) -> dict:
         with self.lock:
-            if tibia_status() == RUNNING:
-                raise UserError(_("Tibia is running. Close the game yourself, then try again."))
+            self._require_closed(confirmed_closed, _("Tibia is running. Close the game yourself, then try again."))
             backup = self._backup_path(folder_id, file)
             try:
                 safety = lootfile.restore_backup(backup, self._folder(folder_id), self.store.backups)

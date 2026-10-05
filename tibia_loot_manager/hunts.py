@@ -17,7 +17,9 @@ thousands separators; item names in plural form):
       12x dragon hams
 
 Parsing is tolerant: unknown lines are ignored, and every looted line that
-can't be matched to exactly one item is reported rather than guessed.
+can't be matched to exactly one item is reported rather than guessed. When
+several items share a name, the likeliest is shown but left out of totals and
+task progress until the user picks one (the pick is remembered per name).
 """
 
 import hashlib
@@ -116,15 +118,19 @@ def best_npc_price(item: dict) -> int | None:
     return max(prices) if prices else None
 
 
-def match_item(name: str, library: Library) -> tuple[int | None, str]:
-    """(client ID, how it matched): "exact", "plural", "chosen" (several candidates), or "none"."""
+def match_item(name: str, library: Library) -> tuple[int | None, str, list[int]]:
+    """(client ID, how it matched, candidates).
+
+    ``how`` is "exact", "plural", "chosen" (several items share the name; the likeliest was picked and
+    ``candidates`` lists them all, likeliest first), or "none".
+    """
     for i, form in enumerate(singular_forms(name)):
         ids = library.ids_by_name.get(name_key(form), [])
         if not ids:
             continue
         how = "exact" if i == 0 else "plural"
         if len(ids) == 1:
-            return ids[0], how
+            return ids[0], how, []
         # Same name, several objects: prefer the one on the Delivery Task list, then one NPCs buy, then
         # anything but a quest item, then one NPCs trade at all, then a marketable one. Marked "chosen"
         # so the screen can say it wasn't certain.
@@ -135,8 +141,9 @@ def match_item(name: str, library: Library) -> tuple[int | None, str]:
             wiki = library.wiki_by_id.get(cid) or {}
             return (cid in delivery, best_npc_price(item) is not None, wiki.get("primarytype") != "Quest Items",
                     bool(item.get("npc_offers")), item.get("market_category") is not None, -cid)
-        return max(ids, key=rank), "chosen"
-    return None, "none"
+        ranked = sorted(ids, key=rank, reverse=True)
+        return ranked[0], "chosen", ranked
+    return None, "none", []
 
 
 def report_id(text: str) -> str:

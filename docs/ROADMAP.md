@@ -58,3 +58,21 @@ Rules that apply to all of them:
 
 - The user marks items for price review and checks values manually.
 - Polling only if the user explicitly enables it for the watchlist, with a visible interval and an easy off switch.
+
+## 7. Link profiles to characters
+
+- Assign a profile to a character folder. On the Install screen, choosing that character picks its profile, and the
+  preview names the pairing ("Main → folder 1234, labelled Knight") before anything is written.
+- Data: a `character → profile id` map in `UserState`; a deleted profile falls back to "no link".
+
+## 8. Move all local data to another PC
+
+- Export everything (profiles and their history, saved hunt reports, weekly tasks, favorites, saved searches, labels,
+  settings) to one file, and import it on another PC with a preview of what will be replaced.
+- Never includes loot files from the game folder or the cached client and wiki data (those are rebuilt locally).
+- Data: one versioned JSON bundle; import validates every part with the same checks as loading from disk.
+
+## 9. Edit tier rules in the app
+
+- A Strictness settings view to change price thresholds and category tiers, with a live preview of each level's item
+  count and the items that change, instead of editing `tier_rules.json` by hand.

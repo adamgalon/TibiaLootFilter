@@ -5,12 +5,13 @@ HTML. All access to the library and user state goes through ``self.lock``.
 """
 
 import copy
+import json
 import os
 import threading
 import webbrowser
 from pathlib import Path
 
-from .. import __version__, lootfile, paths, support
+from .. import __version__, lootfile, paths, profiles, support
 from ..datastore import DataStore
 from ..help_content import FAQ, RELEASE_NOTES
 from ..i18n import _
@@ -46,6 +47,9 @@ class Dialogs:
                   initial_dir: str | None = None) -> str | None:
         return None
 
+    def open_file(self, kinds: list[tuple[str, str]], initial_dir: str | None = None) -> str | None:
+        return None
+
 
 def _state_of(code: str) -> str:
     return MAPPING_STATE.get(code, UNVERIFIED)
@@ -70,6 +74,10 @@ class AppService:
         self.http = http  # a PoliteHttpClient, or None for the default
         self.lock = threading.RLock()
         self.library, self.notices = self.store.load_library()
+        self.history = profiles.History(self.store.root)
+        if profiles.ensure(self.library.state):
+            self._save()
+            self._accepted_changed(_("Profile created"))
         if self.library.reference_issues:
             self.notices.insert(0, _("Item IDs cannot be trusted: the installed client data failed the reference "
                                      "check ({problems}). Exporting and installing are blocked.").format(
@@ -155,6 +163,9 @@ class AppService:
                 "version": __version__,
                 "theme": lib.state.theme,
                 "onboarded": lib.state.onboarded,
+                "profile": {"id": lib.state.active_profile,
+                            "name": lib.state.profiles.get(lib.state.active_profile, {}).get("name", ""),
+                            "count": len(lib.state.profiles)},
                 "notices": self.notices,
                 "reference_ok": not lib.reference_issues,
                 "reference_issues": lib.reference_issues,
@@ -212,6 +223,7 @@ class AppService:
             self.library.state.accepted_follow_delivery = bool(start_full)
             self.library.state.onboarded = True
             self._save()
+            self._accepted_changed(_("Starting list chosen"))
             return {}
 
     # --- catalog ---------------------------------------------------------------------------
@@ -353,6 +365,7 @@ class AppService:
             lib = self.library
             active, excluded = lib.accepted_entries()
             entry = self._find(active, key)
+            name = entry.name if entry else (lib.item_name(int(key)) if key.isdigit() else key.removeprefix("wiki:"))
             if entry:
                 lib.remove_from_accepted(entry)
             elif key.isdigit():
@@ -362,7 +375,9 @@ class AppService:
                 if gone:
                     lib.restore_accepted_entry(gone)
             self._save()
-            return {"in_accepted": self._find(lib.accepted_entries()[0], key) is not None}
+            now_in = self._find(lib.accepted_entries()[0], key) is not None
+            self._accepted_changed((_("Added {name}") if now_in else _("Removed {name}")).format(name=name))
+            return {"in_accepted": now_in}
 
     def toggle_delivery(self, key: str) -> dict:
         with self.lock:
@@ -390,13 +405,185 @@ class AppService:
         with self.lock:
             self.library.restore_accepted_defaults()
             self._save()
+            self._accepted_changed(_("Restored defaults"))
             return {}
 
     def set_follow_delivery(self, on: bool) -> dict:
         with self.lock:
             self.library.state.accepted_follow_delivery = bool(on)
             self._save()
+            self._accepted_changed(_("Included the Delivery Task list") if on
+                                   else _("Stopped including the Delivery Task list"))
             return {}
+
+    # --- profiles --------------------------------------------------------------------------
+
+    def _accepted_changed(self, description: str) -> None:
+        """Record the active profile's list in its history (skipped when nothing changed)."""
+        st = self.library.state
+        self.history.record(st.active_profile, description, profiles.snapshot(st),
+                            len(self.library.accepted_entries()[0]))
+
+    def _entries_for(self, snap: dict) -> list[Entry]:
+        """Accepted Loot entries a profile would have, computed without switching to it."""
+        st = self.library.state
+        saved = profiles.snapshot(st)
+        profiles.apply(st, snap)
+        try:
+            return self.library.accepted_entries()[0]
+        finally:
+            profiles.apply(st, saved)
+
+    def _snap(self, pid: str) -> dict:
+        st = self.library.state
+        if pid not in st.profiles:
+            raise UserError(_("That profile no longer exists."))
+        profiles.sync_active(st)
+        return st.profiles[pid]
+
+    def profile_list(self) -> dict:
+        with self.lock:
+            st = self.library.state
+            profiles.sync_active(st)
+            rows = []
+            for pid, p in st.profiles.items():
+                entries = self._entries_for(p)
+                rows.append({"id": pid, "name": p["name"], "created": p.get("created"),
+                             "active": pid == st.active_profile, "count": len(entries),
+                             "exportable": sum(e.exportable for e in entries),
+                             "follow_delivery": p.get("follow_delivery", True)})
+            chars = [{"id": c.folder_id, "label": st.character_labels.get(c.folder_id, ""),
+                      "accepted": len((c.data or {}).get(lootfile.KEY_ACCEPTED, []))}
+                     for c in self._characters() if c.data]
+            return {"profiles": rows, "active": st.active_profile, "characters": chars}
+
+    def _run_profile_op(self, op, *args):
+        try:
+            return op(*args)
+        except profiles.ProfileError as e:
+            raise UserError(str(e)) from None
+
+    def profile_create(self, name: str, start: str = "delivery") -> dict:
+        with self.lock:
+            st = self.library.state
+            snap = {"follow_delivery": start == "delivery", "extra": [], "excluded": []}
+            if start == "copy":
+                snap = profiles.snapshot(st)
+            pid = self._run_profile_op(profiles.create, st, name, snap)
+            profiles.switch(st, pid)
+            self._save()
+            self._accepted_changed(_("Profile created"))
+            return {"id": pid}
+
+    def profile_switch(self, pid: str) -> dict:
+        with self.lock:
+            self._run_profile_op(profiles.switch, self.library.state, pid)
+            self._save()
+            return {}
+
+    def profile_rename(self, pid: str, name: str) -> dict:
+        with self.lock:
+            self._run_profile_op(profiles.rename, self.library.state, pid, name)
+            self._save()
+            return {"name": self.library.state.profiles[pid]["name"]}
+
+    def profile_duplicate(self, pid: str) -> dict:
+        with self.lock:
+            st = self.library.state
+            source = dict(self._snap(pid))
+            new = self._run_profile_op(profiles.create, st, _("{name} copy").format(name=source["name"]), source)
+            self._save()
+            return {"id": new}
+
+    def profile_delete(self, pid: str) -> dict:
+        with self.lock:
+            self._run_profile_op(profiles.delete, self.library.state, pid)
+            self.history.forget(pid)
+            self._save()
+            return {}
+
+    def profile_history(self, pid: str) -> dict:
+        with self.lock:
+            self._snap(pid)
+            entries = self.history.entries(pid)
+            return {"entries": [{"index": i, "at": e["at"], "description": e.get("description", ""),
+                                 "count": e.get("count")} for i, e in reversed(list(enumerate(entries)))]}
+
+    def profile_restore(self, pid: str, index: int) -> dict:
+        with self.lock:
+            st = self.library.state
+            self._snap(pid)
+            entries = self.history.entries(pid)
+            if not 0 <= index < len(entries):
+                raise UserError(_("That version is no longer in the history."))
+            snap = entries[index]["snapshot"]
+            if pid == st.active_profile:
+                profiles.apply(st, snap)
+            else:
+                st.profiles[pid].update(snap)
+            self._save()
+            if pid == st.active_profile:
+                self._accepted_changed(_("Restored the version from {at}").format(at=entries[index]["at"][:16]))
+            return {}
+
+    def profile_compare(self, a: str, b: str) -> dict:
+        with self.lock:
+            def keyed(pid):
+                return {(e.client_id if e.client_id is not None else e.key): e.name
+                        for e in self._entries_for(self._snap(pid))}
+            left, right = keyed(a), keyed(b)
+            st = self.library.state
+            return {"a": st.profiles[a]["name"], "b": st.profiles[b]["name"],
+                    "only_a": sorted(left[k] for k in left.keys() - right.keys()),
+                    "only_b": sorted(right[k] for k in right.keys() - left.keys()),
+                    "both": len(left.keys() & right.keys())}
+
+    def profile_export(self, pid: str) -> dict:
+        with self.lock:
+            st = self.library.state
+            data = profiles.export_data(st, pid, __version__) if pid in st.profiles else None
+        if data is None:
+            raise UserError(_("That profile no longer exists."))
+        safe = "".join(c for c in data["name"] if c.isalnum() or c in " -_").strip() or "profile"
+        path = self.dialogs.save_file(f"{safe}.lootprofile.json", ".json", [(_("Loot profile"), "*.json")])
+        if not path:
+            return {"cancelled": True}
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        return {"path": path}
+
+    def profile_import(self) -> dict:
+        path = self.dialogs.open_file([(_("Loot profile"), "*.json"), (_("All files"), "*.*")])
+        if not path:
+            return {"cancelled": True}
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError) as e:
+            raise UserError(_("Couldn't read that file: {error}").format(error=e)) from None
+        name, snap = self._run_profile_op(profiles.parse_import, data)
+        with self.lock:
+            pid = self._run_profile_op(profiles.create, self.library.state, name, snap)
+            profiles.switch(self.library.state, pid)
+            self._save()
+            self._accepted_changed(_("Imported from {file}").format(file=Path(path).name))
+            return {"id": pid, "name": self.library.state.profiles[pid]["name"]}
+
+    def profile_from_character(self, folder_id: str) -> dict:
+        """A new profile holding exactly a character's current in-game Accepted Loot list."""
+        with self.lock:
+            st = self.library.state
+            folder = self._folder(folder_id)
+            if not folder.data:
+                raise UserError(_("This character has no readable loot file."))
+            ids = list(dict.fromkeys(folder.data.get(lootfile.KEY_ACCEPTED, [])))
+            label = st.character_labels.get(folder_id) or _("Folder {id}").format(id=folder_id)
+            pid = self._run_profile_op(profiles.create, st, _("From {label}").format(label=label),
+                                       {"follow_delivery": False, "extra": ids, "excluded": []})
+            profiles.switch(st, pid)
+            self._save()
+            self._accepted_changed(_("Copied from the character's loot file"))
+            return {"id": pid, "count": len(ids)}
 
     # --- Delivery Task list ---------------------------------------------------------------
 

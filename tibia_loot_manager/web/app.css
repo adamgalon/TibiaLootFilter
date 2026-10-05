@@ -149,6 +149,12 @@ button { font: inherit; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .spin { display: inline-block; animation: spin 1s linear infinite; }
 
+/* profile switcher on the Accepted Loot screen */
+.profile-bar {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 16px; padding: 10px 12px;
+  border-radius: 8px; background: var(--color-surface);
+}
+
 /* inline label editor */
 .label-input { min-height: 28px; padding: 3px 8px; font-size: 13px; max-width: 180px; }
 

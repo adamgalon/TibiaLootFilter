@@ -118,7 +118,10 @@ async function loadItem(key) { S.cat.sel = key; S.cat.item = await get('item', {
 const LOADERS = {
   catalog: () => loadCatalog(false),
   delivery: async () => { S.del.data = await get('delivery', { tab: S.del.tab }); },
-  accepted: async () => { S.acc.data = await get('accepted', { tab: S.acc.tab }); },
+  accepted: async () => {
+    const [acc, prof] = await Promise.all([get('accepted', { tab: S.acc.tab }), get('profiles')]);
+    S.acc.data = { ...acc, profiles: prof.profiles };
+  },
   export: async () => { S.exp.data = await get('export', { sort: S.exp.sort, ids: S.exp.ids ? 1 : '' }); },
   install: async () => { S.ins.data = await get('install', { selected: S.ins.selected }); S.ins.selected = S.ins.data.selected; },
   sources: async () => { S.src.data = await get('sources'); },
@@ -189,7 +192,7 @@ function viewApp() {
       <div style="display:flex;flex-direction:column;gap:2px">
         ${SCREENS.map(([k, label, ic]) => html`
           <button class="nav-btn ${S.screen === k ? 'on' : ''}" data-act="go" data-screen="${k}" ${raw(S.screen === k ? 'aria-current="page"' : '')}>
-            ${icon(ic)}<span style="flex:1">${label}</span><span class="nav-count">${counts[k] || ''}</span>
+            ${icon(ic)}<span style="flex:1;min-width:0">${label}${k === 'accepted' && a.profile && a.profile.count > 1 ? html`<span class="ellipsis" style="display:block;font-size:11.5px;color:var(--muted)">${a.profile.name}</span>` : ''}</span><span class="nav-count">${counts[k] || ''}</span>
           </button>`)}
       </div>
       <div style="flex:1"></div>
@@ -473,6 +476,16 @@ function viewAccepted() {
       <div style="flex:1"><h1>My Accepted Loot</h1><div class="page-sub">The list you will copy or install.</div></div>
       <button class="btn btn-secondary" data-act="acc-defaults">${icon('arrow-counter-clockwise')}Restore defaults</button>
     </div>
+    <div class="profile-bar">
+      ${icon('user-list', 'class="accent" style="font-size:18px"')}
+      <label class="muted" for="profile-select" style="font-size:13px">Profile</label>
+      <select id="profile-select" class="input" data-change="profile-switch" style="width:auto;min-width:180px;min-height:32px;padding:4px 8px">
+        ${(d.profiles || []).map(p => html`<option value="${p.id}" ${raw(p.active ? 'selected' : '')}>${p.name}</option>`)}
+      </select>
+      <button class="btn btn-secondary" data-act="profile-new" style="font-size:13px">${icon('plus')}New…</button>
+      <button class="btn btn-secondary" data-act="profiles-open" style="font-size:13px">${icon('gear-six')}Manage…</button>
+      <button class="btn btn-ghost" data-act="history-open" style="font-size:13px;padding-inline:8px">${icon('clock-counter-clockwise')}History…</button>
+    </div>
     <div style="display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin:22px 0 6px">
       <span style="font-size:44px;font-weight:500;letter-spacing:-.02em;line-height:1">${num(c.total)}</span><span style="font-size:15px;color:var(--muted)">items</span>
     </div>
@@ -484,6 +497,7 @@ function viewAccepted() {
     <div style="display:flex;gap:12px;flex-wrap:wrap;margin:20px 0 22px">
       ${c.blocked ? html`<div class="note warn-bg" style="flex:1;min-width:280px">${icon('warning', 'class="warn"')}
         <div><div style="font-weight:500;margin-bottom:3px">${plural(c.blocked, 'item can’t', 'items can’t')} be exported yet</div><div style="color:var(--muted)">Their Tibia item IDs are unverified or conflicting. They stay on your list and appear in the manual checklist, but are left out of game files.</div></div></div>`
+      : !c.total ? html`<div class="note" style="flex:1;min-width:280px">${icon('tray', 'class="muted"')}<div><div style="font-weight:500;margin-bottom:3px">This list is empty</div><div style="color:var(--muted)">Add items from the catalog, or include the Delivery Task list below.</div></div></div>`
       : html`<div class="note" style="flex:1;min-width:280px">${icon('seal-check', 'class="ok"')}<div><div style="font-weight:500;margin-bottom:3px">All ${num(c.total)} items can be exported</div><div style="color:var(--muted)">Every item has a verified Tibia item ID.</div></div></div>`}
       <div class="note ${d.limit.warn ? 'warn-bg' : ''}" style="flex:1;min-width:280px">${icon('gauge', `class="${d.limit.warn ? 'warn' : 'muted'}"`)}
         <div><div style="font-weight:500;margin-bottom:3px">${d.limit.title}</div><div style="color:var(--muted)">${d.limit.text} ${S.app.limit === null ? html`<a href="#" data-act="go" data-screen="sources">Set one in Data sources</a>` : ''}</div></div></div>
@@ -725,9 +739,96 @@ function viewHelp() {
 function viewModal() {
   const m = S.modal;
   if (!m) return '';
-  const views = { update: viewUpdateModal, install: viewInstallModal, restore: viewRestoreModal, report: viewReportModal,
+  const views = { profiles: viewProfilesModal, 'profile-new': viewProfileNewModal, history: viewHistoryModal,
+    update: viewUpdateModal, install: viewInstallModal, restore: viewRestoreModal, report: viewReportModal,
     confirm: viewConfirmModal, error: viewErrorModal };
   return html`<div class="backdrop" data-backdrop role="dialog" aria-modal="true">${views[m.kind](m)}</div>`;
+}
+
+function viewProfileNewModal(m) {
+  const opt = (v, title, desc) => html`
+    <div class="choice ${m.start === v ? 'on' : ''}" data-act="profile-start" data-v="${v}" role="radio" aria-checked="${m.start === v}" tabindex="0">
+      <i class="${m.start === v ? 'ph-fill ph-radio-button' : 'ph ph-circle'} pick"></i>
+      <div><div style="font-weight:500;font-size:14px">${title}</div><div style="font-size:12.5px;color:var(--muted)">${desc}</div></div>
+    </div>`;
+  return html`<div class="dialog" style="width:min(520px,100%)">
+    <div class="dialog-title">New profile</div>
+    <div class="field"><label for="profile-name">Name</label>
+      <input id="profile-name" class="input" data-input="profile-name" value="${m.name}" maxlength="40" placeholder="e.g. Elite Knight, Soul War hunts" data-autofocus></div>
+    <div style="display:grid;gap:8px">
+      ${opt('delivery', 'Start with the Delivery Task list', 'Like a fresh start: every Delivery Task item, then your changes.')}
+      ${opt('empty', 'Start empty', 'Add items yourself from the catalog.')}
+      ${opt('copy', 'Copy my current list', `Everything on “${(S.app.profile || {}).name || 'the current profile'}” right now.`)}
+    </div>
+    <div class="dialog-actions"><button class="btn btn-secondary" data-act="modal-close">Cancel</button>
+      <button class="btn btn-primary" data-act="profile-create">Create and switch</button></div></div>`;
+}
+
+function viewProfilesModal(m) {
+  const d = m.data;
+  if (!d) return html`<div class="dialog"><div class="dialog-title">Profiles</div><div class="muted">Loading…</div></div>`;
+  const names = Object.fromEntries(d.profiles.map(p => [p.id, p.name]));
+  return html`<div class="dialog" style="width:min(820px,100%);gap:16px">
+    <div style="display:flex;align-items:flex-start;gap:12px">
+      <div style="flex:1"><div class="dialog-title">Profiles</div><div style="font-size:13px;color:var(--muted);margin-top:2px">Each profile is its own Accepted Loot list. The Delivery Task list is shared by all of them.</div></div>
+      <button class="btn btn-icon btn-ghost" data-act="modal-close" title="Close" aria-label="Close" style="color:var(--color-text)">${icon('x', 'style="font-size:16px"')}</button>
+    </div>
+    <table class="table">
+      <thead><tr><th>Name</th><th style="width:90px;text-align:right">Items</th><th style="width:100px;text-align:right">Exportable</th><th style="width:330px"></th></tr></thead>
+      <tbody>${d.profiles.map(p => html`<tr>
+        <td>${m.renaming === p.id
+          ? html`<input class="input label-input" data-input="profile-rename" data-id="${p.id}" value="${p.name}" maxlength="40" data-autofocus>`
+          : html`${p.name} ${p.active ? html`<span class="tag tag-accent tag-sm" style="margin-left:6px">Active</span>` : ''}
+                 <button class="icon-btn" data-act="profile-rename" data-v="${p.id}" title="Rename" aria-label="Rename ${p.name}" style="display:inline-grid;width:24px;height:24px;font-size:13px;vertical-align:middle">${icon('pencil-simple')}</button>`}</td>
+        <td class="mono" style="text-align:right;font-size:12.5px">${num(p.count)}</td>
+        <td class="mono" style="text-align:right;font-size:12.5px">${num(p.exportable)}</td>
+        <td style="text-align:right;white-space:nowrap">
+          ${p.active ? '' : html`<button class="btn btn-ghost" data-act="profile-switch-to" data-v="${p.id}" style="font-size:13px;padding-inline:8px">Switch</button>`}
+          <button class="btn btn-ghost" data-act="profile-duplicate" data-v="${p.id}" style="font-size:13px;padding-inline:8px">Duplicate</button>
+          <button class="btn btn-ghost" data-act="profile-export" data-v="${p.id}" style="font-size:13px;padding-inline:8px">Export…</button>
+          ${d.profiles.length > 1 ? html`<button class="btn btn-ghost" data-act="profile-delete" data-v="${p.id}" style="font-size:13px;padding-inline:8px;color:var(--bad)">Delete</button>` : ''}
+        </td></tr>`)}</tbody>
+    </table>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px">
+      <div class="panel" style="gap:8px;padding:14px">
+        <h6 style="margin:0">Import</h6>
+        <button class="btn btn-secondary" data-act="profile-import" style="justify-content:flex-start;font-size:13px">${icon('file-arrow-down')}From a profile file…</button>
+        ${d.characters.length ? html`<div style="display:flex;gap:6px">
+          <select class="input" data-change="profile-char" style="min-height:32px;padding:4px 8px;font-size:13px">${d.characters.map(c => html`<option value="${c.id}" ${raw(m.char === c.id ? 'selected' : '')}>${c.label || 'Folder ' + c.id} · ${num(c.accepted)} items</option>`)}</select>
+          <button class="btn btn-secondary" data-act="profile-from-char" style="font-size:13px;flex:none">From character</button></div>
+          <div style="font-size:12px;color:var(--muted)">Copies a character’s current in-game Accepted list into a new profile.</div>` : ''}
+      </div>
+      <div class="panel" style="gap:8px;padding:14px">
+        <h6 style="margin:0">Compare</h6>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <select class="input" data-change="profile-cmp-a" style="width:auto;min-height:32px;padding:4px 8px;font-size:13px">${d.profiles.map(p => html`<option value="${p.id}" ${raw(m.cmpA === p.id ? 'selected' : '')}>${p.name}</option>`)}</select>
+          <span class="muted">vs</span>
+          <select class="input" data-change="profile-cmp-b" style="width:auto;min-height:32px;padding:4px 8px;font-size:13px">${d.profiles.map(p => html`<option value="${p.id}" ${raw(m.cmpB === p.id ? 'selected' : '')}>${p.name}</option>`)}</select>
+          <button class="btn btn-secondary" data-act="profile-compare" style="font-size:13px">Compare</button>
+        </div>
+        ${m.cmp ? html`<div style="font-size:12.5px;display:grid;gap:6px;max-height:160px;overflow:auto">
+          <div>${num(m.cmp.both)} items on both.</div>
+          <div><b>Only on ${m.cmp.a} (${num(m.cmp.only_a.length)}):</b> <span class="muted">${m.cmp.only_a.slice(0, 40).join(', ') || '—'}${m.cmp.only_a.length > 40 ? '…' : ''}</span></div>
+          <div><b>Only on ${m.cmp.b} (${num(m.cmp.only_b.length)}):</b> <span class="muted">${m.cmp.only_b.slice(0, 40).join(', ') || '—'}${m.cmp.only_b.length > 40 ? '…' : ''}</span></div>
+        </div>` : ''}
+      </div>
+    </div></div>`;
+}
+
+function viewHistoryModal(m) {
+  const d = m.data;
+  return html`<div class="dialog" style="width:min(640px,100%)">
+    <div style="display:flex;align-items:flex-start;gap:12px">
+      <div style="flex:1"><div class="dialog-title">History · ${(S.app.profile || {}).name || ''}</div>
+        <div style="font-size:13px;color:var(--muted);margin-top:2px">Every change to this profile’s list. Restoring a version is itself recorded, so it can be undone.</div></div>
+      <button class="btn btn-icon btn-ghost" data-act="modal-close" title="Close" aria-label="Close" style="color:var(--color-text)">${icon('x', 'style="font-size:16px"')}</button>
+    </div>
+    <div style="max-height:420px;overflow:auto">${!d ? html`<div class="muted">Loading…</div>` : !d.entries.length ? html`<div class="muted">No changes recorded yet.</div>` :
+      d.entries.map((e, i) => html`<div class="dlg-row rule">
+        ${icon(i === 0 ? 'circle-wavy-check' : 'clock', `class="${i === 0 ? 'ok' : 'muted'}" style="font-size:16px"`)}
+        <div><div style="font-size:14px">${e.description}</div><div style="font-size:12px;color:var(--muted)">${fmtDate(e.at)}${e.count !== null && e.count !== undefined ? ' · ' + plural(e.count, 'item', 'items') : ''}</div></div>
+        ${i === 0 ? html`<span class="muted" style="font-size:12.5px">Current</span>` : html`<button class="btn btn-ghost" data-act="history-restore" data-v="${e.index}" style="font-size:13px;padding-inline:8px">Restore</button>`}
+      </div>`)}</div></div>`;
 }
 
 function viewConfirmModal(m) {
@@ -902,6 +1003,17 @@ async function pollUpdate() {
   if (st.running) setTimeout(() => guard(pollUpdate, 'Check for updates'), 600);
 }
 
+async function refreshProfilesModal() {
+  if (!S.modal || S.modal.kind !== 'profiles') { render(); return; }
+  await guard(async () => { S.modal.data = await get('profiles'); S.modal.renaming = null; });
+  render();
+}
+
+async function switchProfile(id) {
+  await guard(async () => { await post('profiles/switch', { id }); await loadState(); await LOADERS[S.screen](); toast(`Switched to “${S.app.profile.name}”.`); }, 'Switch profile');
+  render();
+}
+
 async function previewInstall() {
   S.busy = true;
   await guard(async () => {
@@ -1043,12 +1155,67 @@ const ACTIONS = {
     S.modal = null; render();
   },
 
+  // profiles
+  'profile-new': () => { S.modal = { kind: 'profile-new', name: '', start: 'delivery' }; render(); },
+  'profile-start': el => { S.modal.start = el.dataset.v; render(); },
+  'profile-create': async () => {
+    const m = S.modal;
+    await guard(async () => {
+      await post('profiles/create', { name: m.name, start: m.start });
+      S.modal = null; await loadState(); await LOADERS.accepted(); toast('Switched to the new profile.');
+    }, 'Create profile');
+    render();
+  },
+  'profiles-open': async () => { S.modal = { kind: 'profiles', data: null }; render(); await refreshProfilesModal(); },
+  'profile-switch-to': async el => { await switchProfile(el.dataset.v); await refreshProfilesModal(); },
+  'profile-rename': el => { S.modal.renaming = el.dataset.v; render(); },
+  'profile-duplicate': async el => { await guard(() => post('profiles/duplicate', { id: el.dataset.v }), 'Duplicate profile'); await refreshProfilesModal(); },
+  'profile-export': el => guard(async () => { const r = await post('profiles/export', { id: el.dataset.v }); if (r.path) toast('Profile saved to ' + r.path); }, 'Export profile'),
+  'profile-delete': el => {
+    const p = S.modal.data.profiles.find(x => x.id === el.dataset.v), back = S.modal;
+    S.modal = { kind: 'confirm', title: `Delete “${p.name}”?`, body: `Its list (${num(p.count)} items) and history are removed. Export it first if you may want it back.`, ok: 'Delete profile',
+      run: async () => { await post('profiles/delete', { id: p.id }); await loadState(); await LOADERS[S.screen](); S.modal = back; await refreshProfilesModal(); } };
+    render();
+  },
+  'profile-import': async () => {
+    await guard(async () => { const r = await post('profiles/import'); if (r.cancelled) return; await loadState(); await LOADERS[S.screen](); toast(`Imported “${r.name}” and switched to it.`); }, 'Import profile');
+    await refreshProfilesModal();
+  },
+  'profile-from-char': async () => {
+    const m = S.modal, folder = m.char || (m.data.characters[0] || {}).id;
+    await guard(async () => { const r = await post('profiles/from-character', { folder }); await loadState(); await LOADERS[S.screen](); toast(`New profile with the character’s ${num(r.count)} Accepted items.`); }, 'Create profile from character');
+    await refreshProfilesModal();
+  },
+  'profile-compare': async () => {
+    const m = S.modal, ids = m.data.profiles.map(p => p.id);
+    await guard(async () => { m.cmp = await get('profiles/compare', { a: m.cmpA || ids[0], b: m.cmpB || ids[1] || ids[0] }); }, 'Compare profiles');
+    render();
+  },
+  'history-open': async () => {
+    S.modal = { kind: 'history', data: null }; render();
+    await guard(async () => { S.modal.data = await get('profiles/history', { id: S.app.profile.id }); }, 'Show history');
+    render();
+  },
+  'history-restore': async el => {
+    await guard(async () => {
+      await post('profiles/restore', { id: S.app.profile.id, index: Number(el.dataset.v) });
+      await loadState(); await LOADERS[S.screen]();
+      S.modal.data = await get('profiles/history', { id: S.app.profile.id });
+      toast('Earlier version restored.');
+    }, 'Restore profile version');
+    render();
+  },
+
   // generic modal
   'modal-close': () => { S.modal = null; render(); },
   'confirm-ok': async () => { const m = S.modal; S.modal = null; await guard(m.run); render(); },
 };
 
 const CHANGES = {
+  'profile-switch': el => switchProfile(el.value),
+  'profile-char': el => { S.modal.char = el.value; },
+  'profile-cmp-a': el => { S.modal.cmpA = el.value; },
+  'profile-cmp-b': el => { S.modal.cmpB = el.value; },
   'cat-cat': async el => { S.cat.cat = el.value; await guard(() => loadCatalog()); render(); },
   'exp-sort': async el => { S.exp.sort = el.value; await guard(LOADERS.export); render(); },
   'exp-ids': async el => { S.exp.ids = el.checked; await guard(LOADERS.export); render(); },
@@ -1059,6 +1226,7 @@ const CHANGES = {
 
 let searchTimer = null, composeTimer = null;
 const INPUTS = {
+  'profile-name': el => { S.modal.name = el.value; },
   'search': el => {
     S.cat.q = el.value;
     clearTimeout(searchTimer);
@@ -1109,6 +1277,12 @@ document.addEventListener('keydown', e => {
     if (S.modal.kind === 'report') ACTIONS['report-close'](); else { S.modal = null; render(); }
     return;
   }
+  if (el.dataset && el.dataset.input === 'profile-rename') {
+    if (e.key === 'Enter') saveRename(el);
+    else if (e.key === 'Escape') { S.modal.renaming = null; render(); }
+    return;
+  }
+  if (el.dataset && el.dataset.input === 'profile-name' && e.key === 'Enter') { ACTIONS['profile-create'](); return; }
   if (el.dataset && el.dataset.input === 'label') {
     if (e.key === 'Enter') { guard(async () => { await post('install/label', { folder: el.dataset.folder, label: el.value }); S.ins.editing = null; await LOADERS.install(); render(); }); }
     else if (e.key === 'Escape') { S.ins.editing = null; render(); }
@@ -1117,8 +1291,17 @@ document.addEventListener('keydown', e => {
   if (el.dataset && el.dataset.input === 'limit' && e.key === 'Enter') { ACTIONS['limit-save'](); return; }
   if ((e.key === 'Enter' || e.key === ' ') && el.matches('[role="radio"],[role="switch"]') && el.dataset.act) { e.preventDefault(); el.click(); }
 });
+async function saveRename(el) {
+  if (!S.modal || S.modal.renaming !== el.dataset.id) return;
+  S.modal.renaming = null;
+  await guard(() => post('profiles/rename', { id: el.dataset.id, name: el.value }), 'Rename profile');
+  await loadState(); if (S.screen === 'accepted') await LOADERS.accepted();
+  await refreshProfilesModal();
+}
+
 document.addEventListener('focusout', e => {
   const el = e.target;
+  if (el.dataset && el.dataset.input === 'profile-rename') { saveRename(el); return; }
   if (el.dataset && el.dataset.input === 'label' && S.ins.editing === el.dataset.folder) {
     guard(async () => { await post('install/label', { folder: el.dataset.folder, label: el.value }); S.ins.editing = null; await LOADERS.install(); render(); });
   }

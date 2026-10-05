@@ -57,6 +57,8 @@ class DataStore:
                 shutil.copyfile(self.state_path, self.state_backup_path)
             except OSError:
                 pass
+        from .profiles import sync_active
+        sync_active(state)
         state.save(self.state_path)
 
     # --- source log --------------------------------------------------------------

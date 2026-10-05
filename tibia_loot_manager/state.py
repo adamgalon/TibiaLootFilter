@@ -13,6 +13,14 @@ from .storage import read_json, write_json_atomic
 SCHEMA_VERSION = 1
 
 
+def _valid_profile(pid, p) -> bool:
+    return (isinstance(pid, str) and isinstance(p, dict) and isinstance(p.get("name"), str)
+            and isinstance(p.get("follow_delivery", True), bool)
+            and isinstance(p.get("extra", []), list) and all(isinstance(x, int) and not isinstance(x, bool)
+                                                             for x in p.get("extra", []))
+            and isinstance(p.get("excluded", []), list) and all(isinstance(x, str) for x in p.get("excluded", [])))
+
+
 @dataclass
 class UserState:
     # Delivery Task candidate list overrides
@@ -31,6 +39,10 @@ class UserState:
     theme: str = "dark"  # "dark" or "light"
     onboarded: bool = False  # first-run wizard completed
 
+    # Named loot profiles (see profiles.py): {id: {"name", "created", "follow_delivery", "extra", "excluded"}}
+    profiles: dict[str, dict] = field(default_factory=dict)
+    active_profile: str = ""
+
     schema_version: int = SCHEMA_VERSION
 
     @classmethod
@@ -47,7 +59,9 @@ class UserState:
             if f.name not in data:
                 continue
             value, default = data[f.name], getattr(defaults, f.name)
-            if isinstance(default, bool):
+            if f.name == "profiles":
+                ok = isinstance(value, dict) and all(_valid_profile(k, v) for k, v in value.items())
+            elif isinstance(default, bool):
                 ok = isinstance(value, bool)
             elif isinstance(default, list):
                 ok = isinstance(value, list) and all(isinstance(x, (int, str)) and not isinstance(x, bool)

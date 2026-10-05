@@ -142,6 +142,10 @@ class NativeDialogs(Dialogs):
             return _show(CLSID_FileOpenDialog, IID_IFileOpenDialog, FOS_PICKFOLDERS,
                          "Choose the Tibia characterdata folder", folder=initial)
 
+    def open_file(self, kinds, initial_dir=None):
+        with _lock:
+            return _show(CLSID_FileOpenDialog, IID_IFileOpenDialog, 0, "Open", folder=initial_dir, kinds=kinds)
+
     def save_file(self, initial_name, extension, kinds, initial_dir=None):
         with _lock:
             return _show(CLSID_FileSaveDialog, IID_IFileSaveDialog, FOS_OVERWRITEPROMPT, "Save as",

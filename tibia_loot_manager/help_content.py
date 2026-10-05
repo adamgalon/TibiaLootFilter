@@ -36,6 +36,12 @@ FAQ = [
 ]
 
 RELEASE_NOTES = [
+    ("0.5.0", "2026-10-05", [
+        _("Profiles: separate Accepted Loot lists with history, compare, and import/export."),
+        _("Portable version: unzip and run, no Python needed."),
+        _("Catalog browsing beyond the first 200 items, safer file writes, recovery from damaged files, and a "
+          "working Cancel for updates."),
+    ]),
     ("0.4.0", "2026-10-04", [
         _("Item pictures everywhere, made from your installed client's own sprites; animated items move."),
         _("Fixes: report redaction no longer alters words that contain a short character label; the app can't be "

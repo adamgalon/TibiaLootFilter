@@ -133,10 +133,16 @@ How installing is kept safe:
 - *Merge* keeps the character's current Accepted items and adds yours. *Replace* sets the Accepted list to exactly
   yours and lists every item it will remove. Both modes switch `listType` to `whitelist` and leave the Skipped list as
   it is. The preview shows the mode change.
-- If Tibia is running, the app asks you to close it. It never closes the game itself.
-- Before writing, the app saves a timestamped backup to `%LOCALAPPDATA%\TibiaLootManager\backups\<folder>\`. It then
-  writes only that character's loot file, reads it back and compares it. If the check fails, the backup is restored
-  automatically. Backups can be restored from the Install tab.
+- If Tibia is running, the app asks you to close it. It never closes the game itself. If it can't tell, it says so
+  and asks you to make sure.
+- Before writing, the app saves a timestamped backup to `%LOCALAPPDATA%\TibiaLootManager\backups\<folder>\`. The new
+  content goes to a temporary file in the character's folder. That file is swapped in with a single atomic rename,
+  so an interruption leaves the old file or the new one, never a partial one, and the temporary file never outlives
+  the write. The result is read back and compared. If the check fails, the backup is put back the same way.
+  Restoring a backup works the same and keeps your current file if anything goes wrong. Backups can be restored
+  from the Install tab.
+- If a saved file of the app is damaged, it is set aside as `*.damaged-<time>`, your previous save or the bundled
+  data is used, and a notice tells you. If the app can't start at all, it shows the reason and writes `crash.log`.
 - No verified current list-size limit was found, so none is built in. You can set one on the Data sources tab to get
   a warning.
 

@@ -24,11 +24,12 @@ from ..sources.http import PoliteHttpClient
 from ..sources.registry import KIND_TEXT, SOURCES
 from ..sources.tibiawiki import TibiaWikiSource
 from ..storage import utc_now_iso
-from ..tibia_process import is_tibia_running
+from ..tibia_process import RUNNING, UNKNOWN, tibia_status
 from ..updates import CHANGED, NEW, REMOVED, apply_update, check_for_updates, record_failures
 from ..values import NPC_CHARGES, NPC_PAYS, STALE_AFTER_DAYS
 
 PAGE_SIZE = 200
+MAX_PAGE = 7000  # enough for the whole catalog in one refresh
 
 
 class UserError(Exception):
@@ -242,19 +243,23 @@ class AppService:
                              "in_delivery": in_del, "in_accepted": in_acc})
             # Delivery items with no verified client ID are listed but never exported.
             if not cat and idf != VERIFIED:
+                active_delivery = {e.key for e in lib.delivery_entries()[0]}
                 for entry in lib.unresolved_delivery():
                     if query and not matches_search(query, entry.name, None):
                         continue
                     if idf != "all" and entry.mapping_state != idf:
                         continue
+                    in_del = entry.key in active_delivery  # the user may have excluded it
                     in_acc = entry.key in accepted_keys
-                    if seg == "mine" and not in_acc:
+                    if (seg == "del" and not in_del) or (seg == "mine" and not in_acc):
                         continue
                     rows.append({"key": entry.key, "id": None, "name": entry.name,
                                  "category": entry.delivery["task_category"],
                                  "sub": entry.delivery["task_category"] + " · " + STATE_TEXT[entry.mapping_state],
-                                 "state": entry.mapping_state, "in_delivery": True, "in_accepted": in_acc})
+                                 "state": entry.mapping_state, "in_delivery": in_del, "in_accepted": in_acc})
             rows.sort(key=lambda r: (r["name"].lower(), r["id"] or 0))
+            offset = max(0, offset)
+            limit = min(max(1, limit), MAX_PAGE)
             return {"total": len(rows), "rows": rows[offset:offset + limit], "offset": offset}
 
     def item(self, key: str) -> dict:
@@ -631,7 +636,7 @@ class AppService:
                 "also_skipped": [lib.item_name(i) for i in plan.also_skipped],
                 "blocked": blocked,
                 "limit": limit_message(total, lib.state.loot_list_limit),
-                "tibia_running": is_tibia_running(),
+                **self._tibia_flags(),
                 "backup_dir": str(lootfile.backup_dir_for(self.store.backups, folder_id)),
             }
 
@@ -640,7 +645,7 @@ class AppService:
             pending = self._pending_install
             if not pending or pending[0].folder_id != folder_id or pending[1].mode != mode:
                 raise UserError(_("Please preview the installation again."))
-            if is_tibia_running():
+            if tibia_status() == RUNNING:
                 raise UserError(_("Tibia is running. Close the game yourself, then try again. The client keeps the "
                                   "loot list in memory and can overwrite the file when it exits."))
             folder, plan = pending
@@ -651,6 +656,11 @@ class AppService:
             self._pending_install = None
             return {"backup": result.backup.name if result.backup else None,
                     "count": len(plan.new_data[lootfile.KEY_ACCEPTED])}
+
+    @staticmethod
+    def _tibia_flags() -> dict:
+        status = tibia_status()
+        return {"tibia_running": status == RUNNING, "tibia_unknown": status == UNKNOWN}
 
     def _backup_path(self, folder_id: str, file: str) -> Path:
         backup = next((b for b in lootfile.list_backups(self.store.backups, folder_id) if b.name == file), None)
@@ -668,11 +678,11 @@ class AppService:
             mode_text = {lootfile.MODE_ACCEPTED: _("Accepted Loot"), lootfile.MODE_SKIPPED: _("Skipped Loot")}
             return {"file": file, "folder": folder_id, "label": self.library.state.character_labels.get(folder_id),
                     "mode": mode_text.get(data[lootfile.KEY_MODE]), "accepted": len(data[lootfile.KEY_ACCEPTED]),
-                    "skipped": len(data[lootfile.KEY_SKIPPED]), "tibia_running": is_tibia_running()}
+                    "skipped": len(data[lootfile.KEY_SKIPPED]), **self._tibia_flags()}
 
     def restore_apply(self, folder_id: str, file: str) -> dict:
         with self.lock:
-            if is_tibia_running():
+            if tibia_status() == RUNNING:
                 raise UserError(_("Tibia is running. Close the game yourself, then try again."))
             backup = self._backup_path(folder_id, file)
             try:
@@ -746,7 +756,8 @@ class AppService:
         with self.lock:
             if self._update and self._update.get("running"):
                 return self.update_status()
-            job = {"running": True, "progress": _("Starting…"), "review": None, "error": None}
+            cancel = threading.Event()
+            job = {"running": True, "progress": _("Starting…"), "review": None, "error": None, "cancel": cancel}
             self._update = job
             # The check runs for minutes without the lock; give it a stable copy of the user's edits.
             snapshot = copy.copy(self.library)
@@ -757,7 +768,10 @@ class AppService:
 
         def work():
             try:
-                job["review"] = check_for_updates(snapshot, self.http, progress=progress)
+                http = self.http or PoliteHttpClient(cancel=cancel)
+                if self.http is not None:
+                    self.http.cancel = cancel
+                job["review"] = check_for_updates(snapshot, http, progress=progress)
             except Exception as e:  # reported to the user; caches are untouched
                 job["error"] = str(e)
             finally:
@@ -800,9 +814,12 @@ class AppService:
         return {}
 
     def cancel_update(self) -> dict:
+        """Stop a running check (its next request or wait raises Cancelled) or discard a finished one."""
         job = self._update
-        if job and job.get("review"):
-            record_failures(job["review"], self.store)
+        if job:
+            job["cancel"].set()
+            if job.get("review"):
+                record_failures(job["review"], self.store)
         self._update = None
         return {}
 

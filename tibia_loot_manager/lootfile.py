@@ -219,21 +219,34 @@ def list_backups(backups_root: Path, folder_id: str) -> list[Path]:
     return sorted(d.glob("lootBlackWhitelist-*.json"), reverse=True) if d.is_dir() else []
 
 
-def _write_verified(file_path: Path, data: dict, staging_dir: Path) -> None:
-    """Write via a staging file kept outside the character folder, then read back and compare."""
-    staging_dir.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix="pending-", suffix=".json", dir=staging_dir)
-    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
-        f.write(serialize(data))
+def _replace_atomically(file_path: Path, content: bytes) -> None:
+    """Replace ``file_path`` in one step: the new content goes to a temporary file in the same
+    folder (so the same drive), is flushed to disk, then swapped in with os.replace. An
+    interruption leaves either the old file or the new one, never a partial file. The
+    temporary file never outlives this call."""
+    file_path = Path(file_path)
+    fd, tmp = tempfile.mkstemp(prefix=f".{file_path.name}.", suffix=".tmp", dir=file_path.parent)
     try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp, file_path)
-    except OSError:
-        # e.g. staging on another drive: fall back to a direct write
-        shutil.copyfile(tmp, file_path)
-        os.unlink(tmp)
-    readback = read_file(file_path)
-    if readback != data:
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def _write_verified(file_path: Path, data: dict) -> None:
+    """Write atomically, then read back and compare."""
+    _replace_atomically(file_path, serialize(data).encode("utf-8"))
+    if read_file(file_path) != data:
         raise LootFileError(_("The written file did not read back identically."))
+
+
+def _put_back(backup: Path, file_path: Path) -> None:
+    """Restore a backup's exact bytes over ``file_path``, atomically."""
+    _replace_atomically(file_path, Path(backup).read_bytes())
 
 
 @dataclass
@@ -252,12 +265,11 @@ def install(plan: InstallPlan, folder: CharacterFolder, backups_root: Path) -> I
     if current != (folder.data if folder.exists else None):
         raise LootFileError(_("The loot file changed since the preview was made. Refresh and try again."))
     backup = create_backup(folder.file_path, backups_root, folder.folder_id)
-    staging = Path(backups_root) / ".staging"
     try:
-        _write_verified(folder.file_path, plan.new_data, staging)
+        _write_verified(folder.file_path, plan.new_data)
     except Exception as e:
         if backup:
-            shutil.copyfile(backup, folder.file_path)
+            _put_back(backup, folder.file_path)
             raise LootFileError(_("Install failed and the previous file was restored: {error}").format(error=e)) from e
         if plan.creates_file:
             try:
@@ -270,8 +282,15 @@ def install(plan: InstallPlan, folder: CharacterFolder, backups_root: Path) -> I
 
 
 def restore_backup(backup: Path, folder: CharacterFolder, backups_root: Path) -> Path | None:
-    """Restore a backup over the character's loot file, backing up the current file first."""
+    """Restore a backup over the character's loot file, backing up the current file first.
+    If the restore can't be verified, the current file is put back."""
     data = read_file(backup)
     safety = create_backup(folder.file_path, backups_root, folder.folder_id)
-    _write_verified(folder.file_path, data, Path(backups_root) / ".staging")
+    try:
+        _write_verified(folder.file_path, data)
+    except Exception as e:
+        if safety:
+            _put_back(safety, folder.file_path)
+            raise LootFileError(_("Restore failed and your current file was kept: {error}").format(error=e)) from e
+        raise
     return safety

@@ -63,7 +63,7 @@ const stateTag = (state, extra = '') => html`<span class="tag tag-sm tag-${state
 
 const S = {
   app: null, screen: 'catalog', modal: null, toast: null, busy: false,
-  cat: { q: '', seg: 'all', cat: '', idf: 'all', rows: [], total: 0, shown: 200, sel: null, item: null, lookup: false },
+  cat: { q: '', seg: 'all', cat: '', idf: 'all', rows: [], total: 0, sel: null, loadingMore: false, item: null, lookup: false },
   del: { tab: 'active', data: null },
   acc: { tab: 'active', data: null },
   exp: { sort: 'name', ids: false, data: null, copied: false },
@@ -102,11 +102,14 @@ async function guard(fn, operation) {
 
 async function loadState() { S.app = await get('state'); document.getElementById('app').dataset.theme = S.app.theme; }
 
+const PAGE = 200;
+// The server pages the catalog. A fresh search loads one page; a refresh after an edit
+// reloads as many rows as were already shown so the list doesn't jump back to the top.
 async function loadCatalog(reset = true) {
   const c = S.cat;
-  const r = await get('catalog', { q: c.q, seg: c.seg, cat: c.cat, idf: c.idf, offset: 0 });
+  const limit = reset ? PAGE : Math.max(PAGE, c.rows.length);
+  const r = await get('catalog', { q: c.q, seg: c.seg, cat: c.cat, idf: c.idf, offset: 0, limit });
   c.rows = r.rows; c.total = r.total;
-  if (reset) c.shown = 200;
   if (!c.sel && c.rows.length) c.sel = c.rows[0].key;
   if (c.sel) await loadItem(c.sel);
 }
@@ -323,7 +326,7 @@ function viewCatalog() {
           <option value="">All categories</option>
           ${a.categories.map(k => html`<option value="${k}" ${raw(c.cat === k ? 'selected' : '')}>${k}</option>`)}
         </select>
-        <span style="margin-left:auto;font-size:12px;color:var(--muted)">${num(c.total)} shown</span>
+        <span style="margin-left:auto;font-size:12px;color:var(--muted)">${c.rows.length < c.total ? `${num(c.rows.length)} of ${num(c.total)}` : num(c.total)} items</span>
       </div>
       <div class="cat-grid rule-strong" style="padding:8px 10px" role="row">
         <span></span><span class="kicker">Item · notes</span><span class="kicker">Item ID</span><span class="kicker">Lists</span><span></span>
@@ -337,7 +340,7 @@ function viewCatalog() {
 function viewCatalogRows() {
   const c = S.cat;
   if (!c.rows.length) return html`<div style="padding:30px 10px;color:var(--muted)">${c.q ? html`No items match “${c.q}”.` : 'No items match these filters.'}</div>`;
-  return html`${c.rows.slice(0, c.shown).map(r => html`
+  return html`${c.rows.map(r => html`
     <div class="cat-grid cat-row ${c.sel === r.key ? 'sel' : ''}" data-act="cat-select" data-key="${r.key}">
       ${spriteSlot(r.id, 34)}
       <div style="min-width:0"><div class="ellipsis" style="font-size:14px">${r.name}</div><div class="ellipsis" style="font-size:12px;color:var(--muted)">${r.sub}</div></div>
@@ -349,7 +352,7 @@ function viewCatalogRows() {
       <button class="toggle-btn ${r.in_accepted ? 'on' : ''}" data-act="cat-toggle" data-key="${r.key}" title="${r.in_accepted ? 'Remove from Accepted Loot' : 'Add to Accepted Loot'}" aria-label="${r.in_accepted ? 'Remove ' + r.name + ' from Accepted Loot' : 'Add ' + r.name + ' to Accepted Loot'}">
         <i class="${r.in_accepted ? 'ph-bold ph-check' : 'ph ph-plus'}"></i></button>
     </div>`)}
-    ${c.rows.length > c.shown ? html`<div style="padding:14px 10px"><button class="btn btn-secondary" data-act="cat-more">Show ${num(Math.min(200, c.rows.length - c.shown))} more (${num(c.rows.length - c.shown)} left)</button></div>` : ''}`;
+    ${c.total > c.rows.length ? html`<div style="padding:14px 10px"><button class="btn btn-secondary" data-act="cat-more" ${raw(c.loadingMore ? 'disabled' : '')}>${c.loadingMore ? 'Loading…' : `Show ${num(Math.min(PAGE, c.total - c.rows.length))} more (${num(c.total - c.rows.length)} left)`}</button></div>` : ''}`;
 }
 
 function valueRows(rows, empty) {
@@ -788,7 +791,7 @@ function viewInstallModal(m) {
     ${p.blocked.length ? html`<div style="font-size:12.5px;color:var(--muted)">${icon('warning', 'class="warn"')} Not installed (ID unverified or conflicting): ${p.blocked.slice(0, 8).join(', ')}${p.blocked.length > 8 ? '…' : ''}</div>` : ''}
     ${p.also_skipped.length ? html`<div style="font-size:12.5px;color:var(--muted)">${num(p.also_skipped.length)} item(s) are also on the Skipped list (${p.also_skipped.slice(0, 5).join(', ')}). In Accepted Loot mode the Skipped list is not used.</div>` : ''}
     <div style="display:grid;gap:8px;font-size:12.5px">
-      <div style="display:flex;gap:8px;align-items:center">${p.tibia_running ? html`${icon('warning-circle', 'class="bad" style="font-size:16px"')}<span><b>Tibia is running.</b> Close the game yourself, then check again. The app never closes it for you.</span>` : html`${icon('check-circle', 'class="ok" style="font-size:16px"')}Tibia is not running`}</div>
+      <div style="display:flex;gap:8px;align-items:center">${p.tibia_running ? html`${icon('warning-circle', 'class="bad" style="font-size:16px"')}<span><b>Tibia is running.</b> Close the game yourself, then check again. The app never closes it for you.</span>` : p.tibia_unknown ? html`${icon('warning', 'class="warn" style="font-size:16px"')}<span>Couldn’t check whether Tibia is running. Make sure the game is closed before installing.</span>` : html`${icon('check-circle', 'class="ok" style="font-size:16px"')}Tibia is not running`}</div>
       <div style="display:flex;gap:8px;align-items:flex-start">${icon('floppy-disk', 'class="accent" style="font-size:16px"')}<span>Backup first to <span class="mono">${p.backup_dir}</span></span></div>
       <div style="display:flex;gap:8px;align-items:center">${icon('arrows-counter-clockwise', 'class="accent" style="font-size:16px"')}The file is read back after writing. If it doesn’t match, the backup is restored.</div>
       ${p.limit.warn ? html`<div style="display:flex;gap:8px;align-items:center" class="warn">${icon('gauge', 'style="font-size:16px"')}${p.limit.text}</div>` : ''}
@@ -812,7 +815,7 @@ function viewRestoreModal(m) {
       <span class="k">Skipped</span><span class="mono">${plural(p.skipped, 'item', 'items')}</span>
     </div>
     <div style="font-size:12.5px;color:var(--muted)">The current file is backed up before restoring, so this can be undone too. Close Tibia first; the app won’t close it for you.</div>
-    ${p.tibia_running ? html`<div style="font-size:12.5px" class="bad">Tibia is running. Close it, then try again.</div>` : ''}
+    ${p.tibia_running ? html`<div style="font-size:12.5px" class="bad">Tibia is running. Close it, then try again.</div>` : p.tibia_unknown ? html`<div style="font-size:12.5px" class="warn">Couldn’t check whether Tibia is running. Make sure it’s closed.</div>` : ''}
     <div class="dialog-actions"><button class="btn btn-secondary" data-act="modal-close">Cancel</button>
       <button class="btn btn-primary" data-act="restore-apply" data-autofocus>Restore</button></div></div>`;
 }
@@ -931,7 +934,17 @@ const ACTIONS = {
   // catalog
   'cat-seg': async el => { S.cat.seg = el.dataset.v; await guard(() => loadCatalog()); render(); },
   'cat-idf': async el => { S.cat.idf = el.dataset.v; await guard(() => loadCatalog()); render(); },
-  'cat-more': () => { S.cat.shown += 200; render(); },
+  'cat-more': async () => {
+    const c = S.cat;
+    if (c.loadingMore) return;
+    c.loadingMore = true; render();
+    await guard(async () => {
+      const r = await get('catalog', { q: c.q, seg: c.seg, cat: c.cat, idf: c.idf, offset: c.rows.length, limit: PAGE });
+      const seen = new Set(c.rows.map(x => x.key));
+      c.rows = c.rows.concat(r.rows.filter(x => !seen.has(x.key))); c.total = r.total;
+    }, 'Load more catalog items');
+    c.loadingMore = false; render();
+  },
   'cat-select': async el => { await guard(() => loadItem(el.dataset.key)); render(); },
   'cat-toggle': async el => { await guard(async () => { await post('accepted/toggle', { key: el.dataset.key }); await loadState(); await loadCatalog(false); }); render(); },
   'detail-acc': async () => { await guard(async () => { await post('accepted/toggle', { key: S.cat.sel }); await loadState(); await loadCatalog(false); }); render(); },

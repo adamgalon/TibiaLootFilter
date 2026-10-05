@@ -80,7 +80,7 @@ class ServiceTest(unittest.TestCase):
         self.assertEqual(data["whitelistTypes"], [17829])
 
     def test_install_and_restore(self):
-        with mock.patch.object(service_mod, "is_tibia_running", return_value=False):
+        with mock.patch.object(service_mod, "tibia_status", return_value="closed"):
             preview = self.svc.install_preview("111", lootfile.MERGE)
             self.assertIn("swap", [r["icon"] for r in preview["rows"]])  # mode change is shown
             result = self.svc.install_apply("111", lootfile.MERGE)
@@ -92,13 +92,13 @@ class ServiceTest(unittest.TestCase):
             self.assertEqual(lootfile.read_file(path)["listType"], "blacklist")
 
     def test_install_refused_while_tibia_runs(self):
-        with mock.patch.object(service_mod, "is_tibia_running", return_value=True):
+        with mock.patch.object(service_mod, "tibia_status", return_value="running"):
             self.assertTrue(self.svc.install_preview("111", lootfile.REPLACE)["tibia_running"])
             with self.assertRaises(UserError):
                 self.svc.install_apply("111", lootfile.REPLACE)
 
     def test_apply_needs_matching_preview(self):
-        with mock.patch.object(service_mod, "is_tibia_running", return_value=False):
+        with mock.patch.object(service_mod, "tibia_status", return_value="closed"):
             self.svc.install_preview("111", lootfile.MERGE)
             with self.assertRaises(UserError):
                 self.svc.install_apply("111", lootfile.REPLACE)

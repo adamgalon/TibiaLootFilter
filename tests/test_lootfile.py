@@ -91,13 +91,43 @@ class InstallTest(unittest.TestCase):
         folder = self.chars()["222"]
         plan = LF.plan_install(None, [1], LF.REPLACE)
 
-        def broken(file_path, data, staging):
+        def broken(file_path, data):
             file_path.write_text("{half")
             raise OSError("disk full")
         with mock.patch.object(LF, "_write_verified", broken):
             with self.assertRaises(LF.LootFileError):
                 LF.install(plan, folder, self.backups)
         self.assertFalse(folder.file_path.exists())
+
+    def test_write_leaves_no_temp_files(self):
+        folder = self.chars()["111"]
+        LF.install(LF.plan_install(folder.data, [17829], LF.MERGE), folder, self.backups)
+        self.assertEqual(sorted(p.name for p in (self.chardata / "111").iterdir()), [LF.FILE_NAME, "other.json"])
+
+    def test_failed_install_restores_backup_atomically(self):
+        folder = self.chars()["111"]
+        plan = LF.plan_install(folder.data, [17829], LF.MERGE)
+
+        def broken(file_path, data):
+            file_path.write_text("{half")
+            raise OSError("disk full")
+        with mock.patch.object(LF, "_write_verified", broken):
+            with self.assertRaises(LF.LootFileError):
+                LF.install(plan, folder, self.backups)
+        self.assertEqual(LF.read_file(folder.file_path), EXISTING)
+
+    def test_failed_restore_keeps_current_file(self):
+        folder = self.chars()["111"]
+        result = LF.install(LF.plan_install(folder.data, [17829], LF.MERGE), folder, self.backups)
+        installed = LF.read_file(folder.file_path)
+
+        def broken(file_path, data):
+            file_path.write_text("{half")
+            raise OSError("disk full")
+        with mock.patch.object(LF, "_write_verified", broken):
+            with self.assertRaises(LF.LootFileError):
+                LF.restore_backup(result.backup, self.chars()["111"], self.backups)
+        self.assertEqual(LF.read_file(folder.file_path), installed)
 
     def test_refuses_if_file_changed_since_preview(self):
         folder = self.chars()["111"]

@@ -35,9 +35,35 @@ class UserState:
 
     @classmethod
     def load(cls, path: Path) -> "UserState":
-        data = read_json(path, default={}) or {}
-        known = {f.name for f in fields(cls)}
-        return cls(**{k: v for k, v in data.items() if k in known})
+        return cls.from_dict(read_json(path, default={}) or {})
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "UserState":
+        """Build state from saved data, dropping unknown keys and values of the wrong type
+        (a hand-edited or damaged file must not crash the app later on)."""
+        defaults = cls()
+        values = {}
+        for f in fields(cls):
+            if f.name not in data:
+                continue
+            value, default = data[f.name], getattr(defaults, f.name)
+            if isinstance(default, bool):
+                ok = isinstance(value, bool)
+            elif isinstance(default, list):
+                ok = isinstance(value, list) and all(isinstance(x, (int, str)) and not isinstance(x, bool)
+                                                     for x in value)
+            elif isinstance(default, dict):
+                ok = isinstance(value, dict) and all(isinstance(k, str) and isinstance(v, str)
+                                                     for k, v in value.items())
+            elif f.name == "loot_list_limit":
+                ok = value is None or (isinstance(value, int) and not isinstance(value, bool) and value > 0)
+            elif isinstance(default, int):
+                ok = isinstance(value, int) and not isinstance(value, bool)
+            else:  # optional strings
+                ok = value is None or isinstance(value, str)
+            if ok:
+                values[f.name] = value
+        return cls(**values)
 
     def save(self, path: Path) -> None:
         write_json_atomic(path, asdict(self))

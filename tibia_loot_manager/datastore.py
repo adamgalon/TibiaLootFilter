@@ -1,12 +1,13 @@
 """Local caches, the source log, and first-run bootstrap."""
 
+import shutil
 from pathlib import Path
 
 from . import paths
 from .library import Library
 from .sources import tibia_client
 from .state import UserState
-from .storage import read_json, utc_now_iso, write_json_atomic
+from .storage import read_json, read_json_checked, utc_now_iso, write_json_atomic
 
 SEED_DELIVERY = "seed_delivery.json"
 SEED_WIKI_INDEX = "seed_wiki_index.json"
@@ -24,22 +25,47 @@ class DataStore:
         self.wiki_index_path = self.cache / "wiki_index.json"
         self.source_log_path = self.root / "source_log.json"
         self.backups = self.root / "backups"
+        self.state_backup_path = self.root / "user_state.json.bak"
+        self.recovery_notices: list[str] = []  # damaged files found while loading
+
+    def _damaged(self, what: str, moved: Path, outcome: str) -> None:
+        self.recovery_notices.append(f"{what} was damaged and could not be read. {outcome} The damaged file was "
+                                     f"kept as {moved.name} in the app data folder.")
 
     # --- state -----------------------------------------------------------------
 
     def load_state(self) -> UserState:
-        state = UserState.load(self.state_path)
+        is_dict = lambda d: isinstance(d, dict)  # noqa: E731
+        data, moved = read_json_checked(self.state_path, {}, valid=is_dict)
+        if moved:
+            backup, bad_backup = read_json_checked(self.state_backup_path, None, valid=is_dict)
+            if backup is not None and not bad_backup:
+                data = backup
+                self._damaged("Your saved lists and settings file", moved, "Your previous save was restored.")
+            else:
+                self._damaged("Your saved lists and settings file", moved,
+                              "No usable previous save was found, so settings start fresh.")
+        state = UserState.from_dict(data or {})
         if not state.characterdata_dir:
             state.characterdata_dir = str(paths.default_characterdata_dir())
         return state
 
     def save_state(self, state: UserState) -> None:
+        # Keep the previous save so a damaged file can be recovered next time.
+        if self.state_path.is_file():
+            try:
+                shutil.copyfile(self.state_path, self.state_backup_path)
+            except OSError:
+                pass
         state.save(self.state_path)
 
     # --- source log --------------------------------------------------------------
 
     def source_log(self) -> dict:
-        return read_json(self.source_log_path, default={}) or {}
+        log, moved = read_json_checked(self.source_log_path, {}, valid=lambda d: isinstance(d, dict))
+        if moved:
+            self._damaged("The data-source log", moved, "Update history starts fresh.")
+        return log or {}
 
     def record_source(self, source_id: str, ok: bool, error: str | None = None, detail: dict | None = None) -> None:
         log = self.source_log()
@@ -72,8 +98,11 @@ class DataStore:
         """Load everything from cache. Returns the library plus notices for the user."""
         notices: list[str] = []
         state = self.load_state()
+        has_items = lambda d: isinstance(d, dict) and isinstance(d.get("items"), dict)  # noqa: E731
 
-        catalog = read_json(self.catalog_path)
+        catalog, moved = read_json_checked(self.catalog_path, None, valid=has_items)
+        if moved:
+            self._damaged("The cached item catalog", moved, "It is rebuilt from your installed client.")
         package_dir = paths.client_package_dir(Path(state.characterdata_dir))
         outdated = catalog is not None and (catalog.get("source") or {}).get("parser_version") != tibia_client.PARSER_VERSION
         if catalog is None or outdated:
@@ -101,7 +130,9 @@ class DataStore:
             except tibia_client.ClientDataError:
                 pass
 
-        delivery = read_json(self.delivery_path)
+        delivery, moved = read_json_checked(self.delivery_path, None, valid=has_items)
+        if moved:
+            self._damaged("The cached Delivery Task list", moved, "The bundled list is used until the next update.")
         if delivery is None:
             seed = read_json(paths.bundled_data_dir() / SEED_DELIVERY)
             if seed:
@@ -112,12 +143,17 @@ class DataStore:
                                "Press Check for updates for the latest list."
                                .format(date=(seed["source"].get("fetched_at") or "?")[:10]))
 
-        wiki_index = read_json(self.wiki_index_path)
+        wiki_index, moved = read_json_checked(
+            self.wiki_index_path, None, valid=lambda d: isinstance(d, dict) and isinstance(d.get("pages"), dict))
+        if moved:
+            self._damaged("The cached TibiaWiki item index", moved, "The bundled index is used until the next update.")
         if wiki_index is None:
             wiki_index = read_json(paths.bundled_data_dir() / SEED_WIKI_INDEX)
             if wiki_index:
                 wiki_index.setdefault("source", {})["bundled"] = True
                 self.save_wiki_index(wiki_index)
 
-        lookups = read_json(self.lookups_path, default={})
-        return Library(catalog, delivery, lookups, state, wiki_index), notices
+        lookups, moved = read_json_checked(self.lookups_path, {}, valid=lambda d: isinstance(d, dict))
+        if moved:
+            self._damaged("The cached drop lookups", moved, "They will be looked up again when needed.")
+        return Library(catalog, delivery, lookups or {}, state, wiki_index), self.recovery_notices + notices

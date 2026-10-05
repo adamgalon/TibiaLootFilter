@@ -91,7 +91,7 @@ def acquire_single_instance_lock():
     return handle
 
 
-def main() -> None:
+def _run() -> None:
     if sys.platform == "win32":
         try:
             ctypes.windll.shcore.SetProcessDpiAwareness(1)
@@ -151,3 +151,30 @@ def main() -> None:
         server.shutdown()
         root.destroy()
         lock.close()
+
+
+def _fatal(details: str) -> None:
+    """Startup failed: there is no console, so log the error and tell the user in a native dialog."""
+    log = None
+    try:
+        log = paths.app_data_dir() / "crash.log"
+        with open(log, "a", encoding="utf-8") as f:
+            f.write(f"--- {time.strftime('%Y-%m-%d %H:%M:%S')}\n{details}\n")
+    except OSError:
+        pass
+    last = details.strip().splitlines()[-1] if details.strip() else "Unknown error"
+    text = f"Tibia Loot List Manager could not start.\n\n{last}"
+    if log:
+        text += f"\n\nDetails were saved to:\n{log}"
+    if sys.platform == "win32":
+        ctypes.windll.user32.MessageBoxW(None, text, "Tibia Loot List Manager", 0x10)  # MB_ICONERROR
+    else:
+        print(text, file=sys.stderr)
+
+
+def main() -> None:
+    try:
+        _run()
+    except Exception:
+        import traceback
+        _fatal(traceback.format_exc())

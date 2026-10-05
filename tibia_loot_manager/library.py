@@ -94,11 +94,13 @@ def page_names(record: dict) -> set[str]:
 ORIGIN_DELIVERY_SOURCE = "delivery_source"
 ORIGIN_DELIVERY_USER = "delivery_user"
 ORIGIN_MANUAL = "manual"
+ORIGIN_PRESET = "preset"
 
 ORIGIN_TEXT = {
     ORIGIN_DELIVERY_SOURCE: _("Delivery Task (source)"),
     ORIGIN_DELIVERY_USER: _("Delivery Task (added by you)"),
     ORIGIN_MANUAL: _("Added by you"),
+    ORIGIN_PRESET: _("Strictness level"),
 }
 
 
@@ -346,6 +348,11 @@ class Library:
         candidates: list[Entry] = []
         if self.state.accepted_follow_delivery:
             candidates.extend(self.delivery_entries()[0])
+        if self.state.accepted_preset:
+            for cid in self.state.accepted_preset_items:
+                if cid in self.items_by_id:
+                    candidates.append(Entry(client_key(cid), self.item_name(cid), cid, self.client_id_status(cid),
+                                            ORIGIN_PRESET))
         for cid in self.state.accepted_extra:
             status = self.client_id_status(cid)
             candidates.append(Entry(client_key(cid), self.item_name(cid), cid, status, ORIGIN_MANUAL))
@@ -467,6 +474,8 @@ class Library:
         self.state.accepted_follow_delivery = True
         self.state.accepted_extra = []
         self.state.accepted_excluded = []
+        self.state.accepted_preset = ""
+        self.state.accepted_preset_items = []
 
     # --- details ---------------------------------------------------------------
 

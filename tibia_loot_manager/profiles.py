@@ -27,13 +27,17 @@ class ProfileError(Exception):
 
 def snapshot(state: UserState) -> dict:
     return {"follow_delivery": state.accepted_follow_delivery, "extra": list(state.accepted_extra),
-            "excluded": list(state.accepted_excluded)}
+            "excluded": list(state.accepted_excluded), "preset": state.accepted_preset,
+            "preset_items": list(state.accepted_preset_items)}
 
 
 def apply(state: UserState, snap: dict) -> None:
     state.accepted_follow_delivery = bool(snap.get("follow_delivery", True))
     state.accepted_extra = [int(x) for x in snap.get("extra", []) if isinstance(x, int) and not isinstance(x, bool)]
     state.accepted_excluded = [str(x) for x in snap.get("excluded", []) if isinstance(x, str)]
+    state.accepted_preset = snap.get("preset") if isinstance(snap.get("preset"), str) else ""
+    state.accepted_preset_items = [int(x) for x in snap.get("preset_items", [])
+                                   if isinstance(x, int) and not isinstance(x, bool)]
 
 
 def ensure(state: UserState) -> bool:
@@ -79,7 +83,8 @@ def create(state: UserState, name: str, snap: dict) -> str:
     pid = _new_id(state, name)
     state.profiles[pid] = {"name": clean_name(name, state), "created": utc_now_iso(),
                            "follow_delivery": bool(snap.get("follow_delivery", True)),
-                           "extra": list(snap.get("extra", [])), "excluded": list(snap.get("excluded", []))}
+                           "extra": list(snap.get("extra", [])), "excluded": list(snap.get("excluded", [])),
+                           "preset": snap.get("preset", ""), "preset_items": list(snap.get("preset_items", []))}
     return pid
 
 
@@ -114,7 +119,8 @@ def export_data(state: UserState, pid: str, app_version: str) -> dict:
     p = state.profiles[pid]
     return {"format": EXPORT_FORMAT, "version": EXPORT_VERSION, "app_version": app_version,
             "exported_at": utc_now_iso(), "name": p["name"], "follow_delivery": p["follow_delivery"],
-            "extra": p["extra"], "excluded": p["excluded"]}
+            "extra": p["extra"], "excluded": p["excluded"], "preset": p.get("preset", ""),
+            "preset_items": p.get("preset_items", [])}
 
 
 def parse_import(data) -> tuple[str, dict]:
@@ -128,8 +134,13 @@ def parse_import(data) -> tuple[str, dict]:
         raise ProfileError(_("The profile's item list is damaged."))
     if not (isinstance(excluded, list) and all(isinstance(x, str) for x in excluded)):
         raise ProfileError(_("The profile's removed-items list is damaged."))
+    preset, preset_items = data.get("preset", ""), data.get("preset_items", [])
+    if not (isinstance(preset, str) and isinstance(preset_items, list)
+            and all(isinstance(x, int) and not isinstance(x, bool) and x > 0 for x in preset_items)):
+        raise ProfileError(_("The profile's strictness level is damaged."))
     name = data.get("name") if isinstance(data.get("name"), str) else _("Imported profile")
-    return name, {"follow_delivery": bool(data.get("follow_delivery", True)), "extra": extra, "excluded": excluded}
+    return name, {"follow_delivery": bool(data.get("follow_delivery", True)), "extra": extra, "excluded": excluded,
+                  "preset": preset, "preset_items": preset_items}
 
 
 # --- history -------------------------------------------------------------------------------

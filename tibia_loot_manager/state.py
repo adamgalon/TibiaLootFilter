@@ -19,7 +19,10 @@ def _valid_profile(pid, p) -> bool:
             and isinstance(p.get("follow_delivery", True), bool)
             and isinstance(p.get("extra", []), list) and all(isinstance(x, int) and not isinstance(x, bool)
                                                              for x in p.get("extra", []))
-            and isinstance(p.get("excluded", []), list) and all(isinstance(x, str) for x in p.get("excluded", [])))
+            and isinstance(p.get("excluded", []), list) and all(isinstance(x, str) for x in p.get("excluded", []))
+            and isinstance(p.get("preset", ""), str)
+            and isinstance(p.get("preset_items", []), list) and all(isinstance(x, int) and not isinstance(x, bool)
+                                                                    for x in p.get("preset_items", [])))
 
 
 @dataclass
@@ -32,6 +35,8 @@ class UserState:
     accepted_follow_delivery: bool = True  # include the (edited) Delivery Task list
     accepted_extra: list[int] = field(default_factory=list)  # client IDs added directly
     accepted_excluded: list[str] = field(default_factory=list)  # entry keys removed by the user
+    accepted_preset: str = ""  # strictness level id (see strictness.py), "" for none
+    accepted_preset_items: list[int] = field(default_factory=list)  # what the level held when last reviewed
 
     # Settings
     characterdata_dir: str | None = None
@@ -75,6 +80,10 @@ class UserState:
                 ok = valid_week(value)
             elif f.name == "weekly_archive":
                 ok = isinstance(value, list) and all(isinstance(x, dict) for x in value)
+            elif f.name == "accepted_preset":
+                ok = isinstance(value, str)
+            elif f.name == "accepted_preset_items":
+                ok = isinstance(value, list) and all(isinstance(x, int) and not isinstance(x, bool) for x in value)
             elif f.name == "favorites":
                 ok = isinstance(value, list) and all(isinstance(x, str) for x in value)
             elif f.name == "saved_searches":

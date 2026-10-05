@@ -36,6 +36,8 @@ Rules that apply to all of them:
 - Data: implement `values.MarketValueProvider` for a chosen source, with `authority=THIRD_PARTY_ESTIMATE` and
   `world` set.
 - Still never adds items to lists automatically.
+- Market values could also tier items that no NPC buys for strictness levels (today they're tiered by Market
+  category). They'd be shown as estimates, and any change would go through the level's review step.
 
 ## 4. Loot profiles — Built (0.5.0)
 

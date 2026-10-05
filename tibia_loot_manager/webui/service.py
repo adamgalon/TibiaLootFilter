@@ -11,13 +11,13 @@ import threading
 import webbrowser
 from pathlib import Path
 
-from .. import __version__, hunts, lootfile, paths, profiles, support, weekly
+from .. import __version__, hunts, lootfile, paths, profiles, strictness, support, weekly
 from ..datastore import DataStore
 from ..help_content import FAQ, RELEASE_NOTES
 from ..i18n import _
 from ..library import (
-    ID_STATUS_DETAIL, MAPPING_STATE, ORIGIN_DELIVERY_SOURCE, ORIGIN_DELIVERY_USER, ORIGIN_MANUAL, STATE_TEXT,
-    UNVERIFIED, VERIFIED, Entry, delivery_url,
+    ID_STATUS_DETAIL, MAPPING_STATE, ORIGIN_DELIVERY_SOURCE, ORIGIN_DELIVERY_USER, ORIGIN_MANUAL, ORIGIN_PRESET,
+    STATE_TEXT, UNVERIFIED, VERIFIED, Entry, delivery_url,
 )
 from ..search import matches_search
 from ..sources import sprites, tibia_client, tibiawiki
@@ -85,6 +85,7 @@ class AppService:
         self._update = None  # {"thread", "progress", "review", "error"}
         self._pending_install = None  # (folder, plan) shown in the last preview
         self._images = None  # (key, sprites.ItemImages | None)
+        self._tiers = None  # (library, rules, {client id: (tier, reason)})
 
     # --- shared helpers ---------------------------------------------------------------
 
@@ -283,9 +284,108 @@ class AppService:
         rows.sort(key=lambda r: (r["name"].lower(), r["id"] or 0))
         return rows
 
+    # --- strictness levels ---------------------------------------------------------------------
+
+    def _tier_map(self) -> dict[int, tuple[str, str]]:
+        """Every item's tier, recomputed when the library or the user's rules file changes."""
+        rules = strictness.load_rules(self.store.root)
+        if not self._tiers or self._tiers[0] is not self.library or self._tiers[1] != rules:
+            self._tiers = (self.library, rules, strictness.tier_map(self.library, rules))
+        return self._tiers[2]
+
+    def _list_change(self, snap: dict) -> dict:
+        """Names added to and removed from the active list if it had this snapshot instead."""
+        key = lambda e: e.client_id if e.client_id is not None else e.key  # noqa: E731
+        before = {key(e): e.name for e in self.library.accepted_entries()[0]}
+        after_entries = self._entries_for(snap)
+        after = {key(e): e.name for e in after_entries}
+        return {"add": sorted((after[k] for k in after.keys() - before.keys()), key=str.lower),
+                "remove": sorted((before[k] for k in before.keys() - after.keys()), key=str.lower),
+                "entries": after_entries}
+
+    def _pending_level(self) -> dict | None:
+        """New prices or rules change what the profile's level holds; shown for review, not applied.
+
+        The counts are what the *list* would gain or lose: an item the level now takes in but that is
+        already on the list (from the Delivery Task list, say) isn't counted.
+        """
+        st = self.library.state
+        if not st.accepted_preset:
+            return None
+        now = strictness.level_ids(self._tier_map(), st.accepted_preset)
+        if set(now) == set(st.accepted_preset_items):
+            return None
+        snap = profiles.snapshot(st)
+        snap["preset_items"] = now
+        change = self._list_change(snap)
+        return {"add": change["add"], "remove": change["remove"]}
+
+    def strictness_overview(self) -> dict:
+        with self.lock:
+            tiers = self._tier_map()
+            st = self.library.state
+            counts = {t: 0 for t in strictness.TIERS}
+            for tier, _reason in tiers.values():
+                counts[tier] += 1
+            return {
+                "levels": [{"id": lid, "name": name, "lowest_tier": low,
+                            "count": len(strictness.level_ids(tiers, lid))} for lid, name, low in strictness.LEVELS],
+                "current": st.accepted_preset, "current_name": strictness.level_name(st.accepted_preset),
+                "follow_delivery": st.accepted_follow_delivery, "tiers": counts,
+                "pending": self._pending_level(),
+                "rules_file": str(self.store.root / strictness.RULES_FILE),
+            }
+
+    def _check_level(self, level: str) -> None:
+        if level and level not in strictness.LEVEL_IDS:
+            raise UserError(_("Unknown strictness level."))
+
+    def strictness_preview(self, level: str) -> dict:
+        """What the list would look like with this level (or none), keeping manual additions and removals."""
+        with self.lock:
+            self._check_level(level)
+            st = self.library.state
+            snap = profiles.snapshot(st)
+            snap.update(preset=level, preset_items=strictness.level_ids(self._tier_map(), level) if level else [])
+            change = self._list_change(snap)
+            after = change["entries"]
+            exportable = sum(e.exportable for e in after)
+            return {"level": level, "name": strictness.level_name(level), "add": change["add"],
+                    "remove": change["remove"], "total_after": len(after), "exportable_after": exportable,
+                    "manual_added": len(st.accepted_extra), "manual_removed": len(st.accepted_excluded),
+                    "limit": limit_message(exportable, st.loot_list_limit)}
+
+    def strictness_apply(self, level: str) -> dict:
+        with self.lock:
+            self._check_level(level)
+            st = self.library.state
+            st.accepted_preset = level
+            st.accepted_preset_items = strictness.level_ids(self._tier_map(), level) if level else []
+            self._save()
+            self._accepted_changed(_("Strictness level: {name}").format(name=strictness.level_name(level))
+                                   if level else _("Stopped using a strictness level"))
+            return {"count": len(self.library.accepted_entries()[0])}
+
+    def strictness_accept_changes(self) -> dict:
+        """Take the pending price/rule changes into the profile's level."""
+        with self.lock:
+            st = self.library.state
+            if not st.accepted_preset:
+                raise UserError(_("This profile doesn't use a strictness level."))
+            st.accepted_preset_items = strictness.level_ids(self._tier_map(), st.accepted_preset)
+            self._save()
+            self._accepted_changed(_("{name} level updated with new prices").format(
+                name=strictness.level_name(st.accepted_preset)))
+            return {}
+
     # --- favorites, saved searches, bulk edits -----------------------------------------------
 
     SAVED_SEARCHES_KEPT = 20
+
+    def _tier_info(self, cid: int) -> dict:
+        tier, reason = self._tier_map()[cid]
+        return {"tier": tier, "reason": strictness.REASON_TEXT[reason],
+                "levels": [name for lid, name, _low in strictness.LEVELS if strictness.accepts(lid, tier)]}
 
     def toggle_favorite(self, key: str) -> dict:
         with self.lock:
@@ -395,6 +495,7 @@ class AppService:
                          "kind": wiki_page.get("primarytype")} if wiki_page else None,
                 "in_accepted": in_acc, "in_delivery": in_del, "is_candidate": bool(record),
                 "favorite": key in lib.state.favorites,
+                "tier": self._tier_info(cid) if cid is not None else None,
                 "delivery_text": delivery_text,
                 "qty": f"{record['min_qty']}–{record['max_qty']}" if record and record.get("min_qty") else None,
                 "delivery_source": {"url": dsrc.get("url"), "revised": dsrc.get("revision_timestamp"),
@@ -904,19 +1005,25 @@ class AppService:
         with self.lock:
             lib = self.library
             active, excluded = lib.accepted_entries()
-            from_delivery = [e for e in active if e.origin != ORIGIN_MANUAL]
+            from_delivery = [e for e in active if e.origin not in (ORIGIN_MANUAL, ORIGIN_PRESET)]
+            from_level = [e for e in active if e.origin == ORIGIN_PRESET]
             added = [e for e in active if e.origin == ORIGIN_MANUAL]
+            level_text = _("Strictness level ({name})").format(name=strictness.level_name(lib.state.accepted_preset))
+            origin_text = {ORIGIN_MANUAL: _("Added by me"), ORIGIN_PRESET: level_text}
             pool = {"active": active, "added": added, "removed": excluded}.get(tab, active)
             active_keys = {e.key for e in active}
             exportable = sum(e.exportable for e in active)
             rows = [{"key": e.key, "id": e.client_id, "name": e.name, "state": e.mapping_state,
                      "state_label": STATE_TEXT[e.mapping_state], "exportable": e.exportable,
                      "on": e.key in active_keys,
-                     "from": _("Added by me") if e.origin == ORIGIN_MANUAL else _("Delivery Task list")}
+                     "from": origin_text.get(e.origin, _("Delivery Task list"))}
                     for e in sorted(pool, key=lambda x: x.name.lower())]
             return {
                 "tab": tab, "rows": rows,
-                "counts": {"total": len(active), "from_delivery": len(from_delivery), "added": len(added),
+                "level": {"id": lib.state.accepted_preset, "name": strictness.level_name(lib.state.accepted_preset),
+                          "pending": self._pending_level()},
+                "counts": {"total": len(active), "from_delivery": len(from_delivery), "from_level": len(from_level),
+                           "added": len(added),
                            "removed": len(excluded), "exportable": exportable, "blocked": len(active) - exportable},
                 "follow_delivery": lib.state.accepted_follow_delivery,
                 "limit": limit_message(exportable, lib.state.loot_list_limit),

@@ -29,6 +29,11 @@ FAQ = [
     (_("When does the app go online?"),
      _("Only when you press Check for updates, Look up drops, or open a link or report. There are no background "
        "checks.")),
+    (_("How do strictness levels decide what's valuable?"),
+     _("Each item gets a tier from the highest price an NPC pays for it in your installed client's data. Items no "
+       "NPC buys are tiered by their Market category (soul cores high, decoration low). A level takes its own tier "
+       "and every tier above it. The catalog's item details show each item's tier and why, and you can always add "
+       "or remove single items on top of a level.")),
     (_("How does the hunt report value my loot?"),
      _("Coins count at face value. Every other item counts at the highest price an NPC pays for it, from your "
        "installed client's data. The game's own Loot figure uses different prices, so the two totals can differ. "
@@ -43,6 +48,8 @@ RELEASE_NOTES = [
     ("0.5.0", "2026-10-05", [
         _("Profiles: separate Accepted Loot lists with history, compare, and import/export."),
         _("Weekly Tasks: track required, collected and remaining amounts for this week's Delivery Tasks."),
+        _("Strictness levels: fill a profile from ready-made tiers, Soft to Uber+1 Strict, with a preview of every "
+          "change. New prices update a level only after you review them."),
         _("Catalog: favorites, saved searches, and adding or removing everything a search matches at once."),
         _("Hunt reports: paste a Hunt Analyzer session to see what the loot is worth to NPCs, which items aren't on "
           "your Accepted Loot list, and add the looted amounts to this week's tasks."),

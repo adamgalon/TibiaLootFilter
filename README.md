@@ -73,7 +73,7 @@ This approach was chosen over a web source such as TibiaWiki's GIFs because:
 | --- | --- |
 | Item catalog | Every lootable item from your installed client. Search it, filter by category, view values, NPC prices and creature drops, and add or remove items from either list. Star items as **favorites**, **save searches** (search text plus filters) to apply them again with one click, and **add or remove everything a search matches** at once, after a confirmation that shows how many items change. Bulk changes are recorded in the profile's history. |
 | Delivery Task list | The source candidate list with your edits applied. Excluded items stay visible under *Excluded by me*, and *Restore source defaults* discards your edits. |
-| My Accepted Loot | Your personal list: the Delivery Task list (switchable) plus items you added minus items you removed. Shows the item count, the limit warning and unverified items. **Profiles** keep separate lists (for characters, hunts or goals): create, switch, rename, duplicate, compare, export or import them, or copy a character's in-game list. Every change is kept in the profile's **history** and any version can be restored. The Delivery Task list edits are shared by all profiles. |
+| My Accepted Loot | Your personal list: the Delivery Task list (switchable) plus items you added minus items you removed. Shows the item count, the limit warning and unverified items. **Profiles** keep separate lists (for characters, hunts or goals): create, switch, rename, duplicate, compare, export or import them, or copy a character's in-game list. Every change is kept in the profile's **history** and any version can be restored. The Delivery Task list edits are shared by all profiles. **Strictness levels** (Soft, Regular, Semi-Strict, Strict, Very Strict, Uber Strict, Uber+1 Strict) fill a profile from ready-made tiers in one click; see [Strictness levels](#strictness-levels). |
 | Weekly Tasks | Track this week's Delivery Tasks: required, collected and remaining amounts, with quick +1/+5/+10 buttons. Warns when a task item isn't on your Accepted Loot list. The week resets at Monday's server save (10:00 German time) and earlier weeks are kept as a summary. |
 | Hunt reports | Paste a session from Tibia's Hunt Analyzer ("Copy to clipboard"). Shows the session totals, each looted item matched to its client ID with the best NPC buy price, items it couldn't match, and whether each item is on your Accepted Loot list (one click to add it). Looted amounts can be added to this week's tasks once per session. The last 30 sessions are kept in `hunts.json`. Only the pasted text is read. |
 | Copy & export | A one-item-per-line checklist for adding items through the Cyclopedia, and a game-format file export. |
@@ -183,6 +183,37 @@ A user can also place a `support.json` in `%LOCALAPPDATA%\TibiaLootManager\`:
 With a destination set, *Send* opens your browser or e-mail program with the report filled in, and you submit it
 there. Nothing is sent automatically. Without one, the report can be copied or saved, and closing an unsaved report
 offers to save it to the app's `reports` folder.
+
+## Strictness levels
+
+Like loot-filter strictness in other games, each level is a ready-made Accepted Loot list, from **Soft** (almost
+anything worth something) to **Uber+1 Strict** (only the most valuable items). Every item gets a tier:
+
+| Tier | NPC buys it for at least | Lowest level that still takes it |
+|---|---|---|
+| S | 100,000 gp | Uber+1 Strict |
+| A | 20,000 gp | Uber Strict |
+| B | 5,000 gp | Very Strict |
+| C | 1,000 gp | Strict |
+| D | 200 gp | Semi-Strict |
+| E | 50 gp | Regular |
+| F | 1 gp | Soft |
+| Junk | — | none |
+
+Each level also takes every tier above its own. Prices are the highest NPC buy price in your installed client's
+data. Items no NPC buys are tiered by Market category instead: soul cores are B, market-only equipment and
+valuables C, creature products D, decoration and food junk. Quest items and items that can't be sold on the
+Market are junk, and coins are always S. The item details panel in the catalog shows each item's tier and why.
+
+- **Choosing a level** on the Accepted Loot screen shows exactly which items it adds and removes before anything
+  changes. Items you add or remove yourself always stay on top of the level, and the **Always include Delivery Task
+  items** switch keeps your task items whatever their value.
+- **The level follows new prices after review.** When a client update or new tier rules change what a level holds,
+  the Accepted Loot screen says so and lists the changes. Nothing changes until you accept.
+- **Changing the rules:** put a `tier_rules.json` in the app's data folder with only the entries you want to change,
+  for example `{"unpriced_category_tiers": {"Soul Cores": "A"}, "items": {"3043": "S"}}`. Each entry overrides
+  the same entry in the bundled [`tier_rules.json`](tibia_loot_manager/data/tier_rules.json).
+- Levels are saved per profile and go with profile export and import.
 
 ## Roadmap
 

@@ -59,6 +59,14 @@ const spriteSlot = (id, size, extra = '') => id
 const STATE_LABEL = { verified: 'Verified', unverified: 'Unverified', conflicting: 'Conflicting' };
 const stateTag = (state, extra = '') => html`<span class="tag tag-sm tag-${state}" ${raw(extra)}>${STATE_LABEL[state] || state}</span>`;
 
+// A picture that fails to load (e.g. its request was cut off by a re-render) is retried once.
+document.addEventListener('error', e => {
+  const img = e.target;
+  if (!(img instanceof HTMLImageElement) || !img.closest('.slot') || img.dataset.retried) return;
+  img.dataset.retried = '1';
+  setTimeout(() => { img.src = img.src + '&retry=1'; }, 400);
+}, true);
+
 // ---------- state -------------------------------------------------------------------
 
 const S = {
@@ -122,8 +130,8 @@ const LOADERS = {
   catalog: () => loadCatalog(false),
   delivery: async () => { S.del.data = await get('delivery', { tab: S.del.tab }); },
   accepted: async () => {
-    const [acc, prof] = await Promise.all([get('accepted', { tab: S.acc.tab }), get('profiles')]);
-    S.acc.data = { ...acc, profiles: prof.profiles };
+    const [acc, prof, levels] = await Promise.all([get('accepted', { tab: S.acc.tab }), get('profiles'), get('strictness')]);
+    S.acc.data = { ...acc, profiles: prof.profiles, levels };
   },
   export: async () => { S.exp.data = await get('export', { sort: S.exp.sort, ids: S.exp.ids ? 1 : '' }); },
   install: async () => { S.ins.data = await get('install', { selected: S.ins.selected }); S.ins.selected = S.ins.data.selected; },
@@ -416,6 +424,9 @@ function viewDetail() {
       ${d.note ? html`<span class="k">Notes</span><span>${d.note}</span>` : ''}
       ${d.same_name.length ? html`<span class="k">Same name</span><span>${d.same_name.map(s => s.id + (s.wiki ? ` (${s.wiki})` : '')).join(', ')}</span>` : ''}
       ${d.wiki ? html`<span class="k">TibiaWiki</span><span>${d.wiki.title}${d.wiki.pageid ? html` <span style="color:var(--muted);font-size:11.5px">· page ${d.wiki.pageid}, not an item ID</span>` : ''}</span>` : ''}
+      ${d.tier ? html`<span class="k">Loot tier</span><span style="display:flex;flex-direction:column;gap:2px">
+        <span><span class="tag tag-sm tier tier-${d.tier.tier}">${d.tier.tier === 'junk' ? 'Junk' : 'Tier ' + d.tier.tier}</span></span>
+        <span style="font-size:12px;color:var(--muted)">${d.tier.reason}. ${d.tier.levels.length ? `Included from ${d.tier.levels[d.tier.levels.length - 1]} down to Soft.` : 'Not in any strictness level.'}</span></span>` : ''}
       <span class="k">Delivery Task</span><span>${d.delivery_text}</span>
       <span class="k">Requested</span><span>${d.qty ? d.qty + ' per task' : '—'}</span>
     </div>
@@ -513,11 +524,13 @@ function viewAccepted() {
       <button class="btn btn-secondary" data-act="profiles-open" style="font-size:13px">${icon('gear-six')}Manage…</button>
       <button class="btn btn-ghost" data-act="history-open" style="font-size:13px;padding-inline:8px">${icon('clock-counter-clockwise')}History…</button>
     </div>
+    ${viewLevels(d)}
     <div style="display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin:22px 0 6px">
       <span style="font-size:44px;font-weight:500;letter-spacing:-.02em;line-height:1">${num(c.total)}</span><span style="font-size:15px;color:var(--muted)">items</span>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:13.5px;color:var(--muted)">
       <span class="mono" style="color:var(--color-text)">${num(c.from_delivery)}</span><span>from Delivery Task list</span>
+      ${d.level.id ? html`<span>+</span><span class="mono" style="color:var(--color-text)">${num(c.from_level)}</span><span>from the ${d.level.name} level</span>` : ''}
       <span>+</span><span class="mono" style="color:var(--color-text)">${num(c.added)}</span><span>added by me</span>
       <span>−</span><span class="mono" style="color:var(--color-text)">${num(c.removed)}</span><span>removed by me</span>
     </div>
@@ -531,7 +544,7 @@ function viewAccepted() {
     </div>
     <div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
       <label style="display:flex;align-items:center;gap:10px;font-size:13.5px;cursor:pointer" data-act="acc-follow" role="switch" aria-checked="${d.follow_delivery}" tabindex="0">
-        <span class="switch ${d.follow_delivery ? 'on' : ''}"><span></span></span>Include the Delivery Task list</label>
+        <span class="switch ${d.follow_delivery ? 'on' : ''}"><span></span></span>${d.level.id ? 'Always include Delivery Task items' : 'Include the Delivery Task list'}</label>
       <div class="seg" style="margin-left:auto" role="radiogroup" aria-label="Show">
         ${[['active', 'On my list', c.total], ['added', 'Added by me', c.added], ['removed', 'Removed by me', c.removed]].map(([k, l, n]) => html`
           <label class="seg-opt nowrap"><input type="radio" name="acctab" data-act="acc-tab" data-v="${k}" ${raw(S.acc.tab === k ? 'checked' : '')}>${l}<span class="mono" style="font-size:11.5px;color:var(--muted)">${num(n)}</span></label>`)}
@@ -549,6 +562,27 @@ function viewAccepted() {
         </tr>`)}</tbody>
     </table>
     ${!d.rows.length ? html`<div style="padding:24px 8px;color:var(--muted)">Nothing here.</div>` : ''}
+  </div>`;
+}
+
+function viewLevels(d) {
+  const L = d.levels;
+  if (!L) return '';
+  const opt = (id, name, count, sub) => html`<button class="level ${L.current === id ? 'on' : ''}" data-act="level-pick" data-v="${id}" aria-pressed="${L.current === id}">
+    <span class="level-name">${name}</span><span class="level-count mono">${count === null ? sub : num(count)}</span></button>`;
+  return html`<div class="level-panel">
+    <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
+      <h6 style="margin:0">Strictness level</h6>
+      <span style="font-size:12.5px;color:var(--muted)">Start the list from a ready-made level, softest to strictest. Items you add or remove yourself always stay on top.</span>
+    </div>
+    <div class="level-track" role="group" aria-label="Strictness level">
+      ${opt('', 'None', null, 'off')}
+      ${L.levels.map(l => opt(l.id, l.name, l.count))}
+    </div>
+    ${d.level.pending ? html`<div class="note warn-bg" style="margin-top:4px">${icon('arrows-clockwise', 'class="warn"')}
+      <div style="flex:1"><div style="font-weight:500;margin-bottom:3px">New prices change the ${d.level.name} level</div>
+        <div class="muted">${d.level.pending.add.length || d.level.pending.remove.length ? `${num(d.level.pending.add.length)} to add, ${num(d.level.pending.remove.length)} to remove. Nothing changes until you accept.` : 'Your list stays the same: the items involved are already on it, or kept off it by you.'}</div></div>
+      <button class="btn btn-primary" data-act="level-review" style="flex:none;align-self:center">Review…</button></div>` : ''}
   </div>`;
 }
 
@@ -898,7 +932,7 @@ function viewModal() {
   if (!m) return '';
   const views = { profiles: viewProfilesModal, 'profile-new': viewProfileNewModal, history: viewHistoryModal,
     update: viewUpdateModal, install: viewInstallModal, restore: viewRestoreModal, report: viewReportModal,
-    confirm: viewConfirmModal, error: viewErrorModal, 'search-save': viewSearchSaveModal };
+    confirm: viewConfirmModal, error: viewErrorModal, 'search-save': viewSearchSaveModal, level: viewLevelModal };
   return html`<div class="backdrop" data-backdrop role="dialog" aria-modal="true">${views[m.kind](m)}</div>`;
 }
 
@@ -986,6 +1020,30 @@ function viewHistoryModal(m) {
         <div><div style="font-size:14px">${e.description}</div><div style="font-size:12px;color:var(--muted)">${fmtDate(e.at)}${e.count !== null && e.count !== undefined ? ' · ' + plural(e.count, 'item', 'items') : ''}</div></div>
         ${i === 0 ? html`<span class="muted" style="font-size:12.5px">Current</span>` : html`<button class="btn btn-ghost" data-act="history-restore" data-v="${e.index}" style="font-size:13px;padding-inline:8px">Restore</button>`}
       </div>`)}</div></div>`;
+}
+
+function nameList(names, limit = 60) {
+  if (!names.length) return html`<span class="muted">—</span>`;
+  return html`<span>${names.slice(0, limit).join(', ')}${names.length > limit ? html` <span class="muted">and ${num(names.length - limit)} more</span>` : ''}</span>`;
+}
+
+function viewLevelModal(m) {
+  const p = m.preview;
+  const title = m.review ? `Update the ${m.name} level?` : p ? (p.level ? `Use the ${p.name} level?` : 'Stop using a strictness level?') : 'Strictness level';
+  return html`<div class="dialog" style="width:min(640px,100%)">
+    <div class="dialog-title">${title}</div>
+    ${!p ? html`<div class="muted">Working out the changes…</div>` : html`
+      <div style="font-size:13.5px">${m.review
+        ? 'Item prices or tier rules changed since you chose this level. These are the items it now adds or drops:'
+        : html`Your list would have <b class="mono">${num(p.total_after)}</b> items${p.manual_added || p.manual_removed ? html`, including your ${plural(p.manual_added, 'own addition', 'own additions')} and leaving out your ${plural(p.manual_removed, 'removal', 'removals')}` : ''}.`}</div>
+      <div style="display:grid;gap:10px;font-size:13px;max-height:300px;overflow:auto">
+        <div><div class="ok" style="font-weight:500;margin-bottom:3px">${icon('plus-circle')} Added (${num(p.add.length)})</div>${nameList(p.add)}</div>
+        <div><div class="bad" style="font-weight:500;margin-bottom:3px">${icon('minus-circle')} Removed (${num(p.remove.length)})</div>${nameList(p.remove)}</div>
+      </div>
+      ${p.limit && p.limit.warn ? html`<div class="note warn-bg">${icon('gauge', 'class="warn"')}<div><div style="font-weight:500;margin-bottom:3px">${p.limit.title}</div><div class="muted">${p.limit.text}</div></div></div>` : ''}
+      <div style="font-size:12.5px;color:var(--muted)">Levels use the highest NPC buy price from your installed client, or the item’s Market category when no NPC buys it. You can undo this from the profile’s history.</div>`}
+    <div class="dialog-actions"><button class="btn btn-secondary" data-act="modal-close">Cancel</button>
+      <button class="btn btn-primary" data-act="${m.review ? 'level-accept' : 'level-apply'}" ${raw(p ? '' : 'disabled')} data-autofocus>${m.review ? 'Accept changes' : p && p.level ? `Use ${p.name}` : 'Stop using a level'}</button></div></div>`;
 }
 
 function viewSearchSaveModal(m) {
@@ -1280,6 +1338,31 @@ const ACTIONS = {
   // accepted
   'acc-tab': async el => { S.acc.tab = el.dataset.v; await guard(LOADERS.accepted); render(); },
   'acc-toggle': async el => { await guard(async () => { await post('accepted/toggle', { key: el.dataset.key }); await loadState(); await LOADERS.accepted(); }); render(); },
+  'level-pick': async el => {
+    const level = el.dataset.v;
+    if (level === S.acc.data.levels.current) return;
+    S.modal = { kind: 'level', level, preview: null }; render();
+    await guard(async () => { S.modal.preview = await get('strictness/preview', { level }); }, 'Preview strictness level');
+    render();
+  },
+  'level-apply': async () => {
+    const p = S.modal.preview;
+    await guard(async () => {
+      const r = await post('strictness/apply', { level: p.level });
+      S.modal = null; await loadState(); await LOADERS.accepted();
+      toast(p.level ? `Using the ${p.name} level: ${plural(r.count, 'item', 'items')} on your list.` : 'Stopped using a strictness level.');
+    }, 'Use strictness level');
+    render();
+  },
+  'level-review': () => {
+    const d = S.acc.data;
+    S.modal = { kind: 'level', review: true, name: d.level.name, preview: { ...d.level.pending, level: d.level.id, name: d.level.name } };
+    render();
+  },
+  'level-accept': async () => {
+    await guard(async () => { await post('strictness/accept-changes'); S.modal = null; await loadState(); await LOADERS.accepted(); toast('Level updated.'); }, 'Update strictness level');
+    render();
+  },
   'acc-follow': async () => { await guard(async () => { await post('accepted/follow', { on: !S.acc.data.follow_delivery }); await loadState(); await LOADERS.accepted(); }); render(); },
   'acc-defaults': () => { S.modal = { kind: 'confirm', title: 'Restore defaults?', body: 'Reset your Accepted Loot list to exactly your Delivery Task list. This discards items you added directly and items you removed. Your Delivery Task list edits are kept.', ok: 'Restore defaults',
     run: async () => { await post('accepted/defaults'); await loadState(); await LOADERS.accepted(); } }; render(); },

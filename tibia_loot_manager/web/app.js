@@ -71,12 +71,13 @@ const S = {
   src: { data: null },
   help: { data: null, open: 2 },
   week: { data: null, q: '', results: [], pick: null, required: '' },
+  hunt: { text: '', analysis: null, list: [] },
   onb: { step: 1, info: null, startFull: true },
 };
 
 const SCREENS = [
   ['catalog', 'Item catalog', 'books'], ['delivery', 'Delivery Task list', 'package'],
-  ['accepted', 'My Accepted Loot', 'check-square'], ['weekly', 'Weekly Tasks', 'calendar-check'],
+  ['accepted', 'My Accepted Loot', 'check-square'], ['weekly', 'Weekly Tasks', 'calendar-check'], ['hunts', 'Hunt reports', 'sword'],
   ['export', 'Copy & export', 'export'],
   ['install', 'Install to character', 'download-simple'], ['sources', 'Data sources', 'database'],
   ['help', 'Help & Support', 'lifebuoy'],
@@ -129,6 +130,7 @@ const LOADERS = {
   sources: async () => { S.src.data = await get('sources'); },
   help: async () => { S.help.data = await get('help'); },
   weekly: async () => { S.week.data = await get('weekly'); },
+  hunts: async () => { S.hunt.list = (await get('hunts')).hunts; },
 };
 
 async function go(screen) {
@@ -182,7 +184,7 @@ function viewToast() {
 function viewApp() {
   const a = S.app;
   const counts = { catalog: num(a.counts.catalog), delivery: num(a.counts.delivery), accepted: num(a.counts.accepted) };
-  const views = { catalog: viewCatalog, delivery: viewDelivery, accepted: viewAccepted, weekly: viewWeekly, export: viewExport,
+  const views = { catalog: viewCatalog, delivery: viewDelivery, accepted: viewAccepted, weekly: viewWeekly, hunts: viewHunts, export: viewExport,
     install: viewInstall, sources: viewSources, help: viewHelp };
   return html`
   <div style="flex:1;display:flex;min-height:0">
@@ -600,6 +602,61 @@ function viewWeekly() {
         <td style="width:160px">Week of ${fmtDate(a.week_start, false)}</td>
         <td class="mono" style="width:90px">${a.done} / ${a.tasks}</td>
         <td style="font-size:12.5px;color:var(--muted)">${(a.items || []).map(i => `${i.name} ${i.collected}/${i.required}`).join(' · ')}</td></tr>`)}</tbody></table></details>` : ''}
+  </div>`;
+}
+
+// ---------- hunt reports ------------------------------------------------------------
+
+function viewHunts() {
+  const h = S.hunt, a = h.analysis, s = a && a.session;
+  const stat = (label, value, sub) => html`<div class="stat"><div class="kicker">${label}</div><div class="stat-value mono">${value}</div>${sub ? html`<div style="font-size:12px;color:var(--muted)">${sub}</div>` : ''}</div>`;
+  return html`
+  <div class="page" style="max-width:1120px">
+    <h1>Hunt reports</h1>
+    <div class="page-sub">Paste a session from Tibia’s Hunt Analyzer (“Copy to clipboard”) to value its loot with NPC prices. Only the text you paste is read.</div>
+    <div class="panel" style="margin:18px 0;gap:10px">
+      <textarea class="input mono" data-input="hunt-text" placeholder="Session data: From … to …&#10;Loot: …&#10;Looted Items:&#10;  3x dragon hams" style="min-height:120px;font-size:12.5px" aria-label="Hunt Analyzer text">${h.text}</textarea>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-secondary" data-act="hunt-paste">${icon('clipboard-text')}Paste from clipboard</button>
+        <button class="btn btn-primary" data-act="hunt-analyze" ${raw(h.text.trim() ? '' : 'disabled')}>${icon('chart-bar')}Analyze</button>
+      </div>
+    </div>
+    ${a ? html`
+      <div class="stat-row">
+        ${stat('Session', s.duration || '—', s.from ? 'from ' + s.from : '')}
+        ${stat('XP gain', num(s.xp))}
+        ${stat('Loot (reported)', gp(s.loot), 'by the game’s own prices')}
+        ${stat('NPC value', gp(a.npc_total), a.unpriced ? `${plural(a.unpriced, 'item', 'items')} without an NPC price` : 'what NPCs pay')}
+        ${stat('Balance', gp(s.balance), s.supplies !== null ? 'supplies ' + gp(s.supplies) : '')}
+      </div>
+      ${a.task_rows ? html`<div class="note" style="margin:14px 0">${icon('calendar-check', 'class="accent"')}
+        <div style="flex:1"><div style="font-weight:500;margin-bottom:3px">${plural(a.task_rows, 'looted item counts', 'looted items count')} toward this week’s tasks</div>
+        <div class="muted">${a.applied_this_week ? 'Already added to this week’s tasks.' : 'Add the looted amounts to your Weekly Tasks progress.'}</div></div>
+        <button class="btn btn-primary" data-act="hunt-apply" ${raw(a.applied_this_week ? 'disabled' : '')} style="flex:none;align-self:center">Add to Weekly Tasks</button></div>` : ''}
+      <table class="table" style="margin-top:12px">
+        <thead><tr><th style="width:44px"></th><th>Item</th><th style="width:80px;text-align:right">Count</th><th style="width:110px;text-align:right">Each</th><th style="width:120px;text-align:right">Total</th><th style="width:150px">Accepted Loot</th></tr></thead>
+        <tbody>${a.rows.map(r => html`<tr>
+          <td>${spriteSlot(r.id, 28)}</td>
+          <td>${r.name || r.line}
+            ${r.how === 'chosen' ? html`<span class="tag tag-unverified tag-sm" title="Several items share this name; the most likely one was chosen" style="margin-left:6px">uncertain</span>` : ''}
+            ${r.id === null ? html`<span class="tag tag-conflicting tag-sm" style="margin-left:6px">not matched</span>` : ''}
+            ${r.task ? html`<span class="tag tag-accent tag-sm" style="margin-left:6px">Task · ${num(r.task.remaining)} left</span>` : ''}</td>
+          <td class="mono" style="text-align:right">${num(r.count)}</td>
+          <td class="mono" style="text-align:right;color:${r.each ? 'var(--color-text)' : 'var(--muted)'}">${r.each ? gp(r.each) : '—'}</td>
+          <td class="mono" style="text-align:right">${r.value ? gp(r.value) : '—'}</td>
+          <td>${r.id === null || r.coin ? '' : r.in_accepted ? html`<span class="ok" style="font-size:13px">${icon('check')} On the list</span>`
+            : html`<button class="btn btn-ghost" data-act="hunt-accept" data-key="${r.id}" style="font-size:13px;padding-inline:8px">${icon('plus')}Add</button>`}</td>
+        </tr>`)}</tbody>
+      </table>
+      ${a.unmatched.length ? html`<div style="font-size:12.5px;color:var(--muted);margin-top:8px">${icon('question')} Not matched to an item: ${a.unmatched.join(', ')}. These aren’t counted in the NPC value.</div>` : ''}
+      ${s.monsters.length ? html`<div style="font-size:12.5px;color:var(--muted);margin-top:8px">Killed: ${s.monsters.slice(0, 10).map(m => `${num(m.count)}× ${m.name}`).join(', ')}${s.monsters.length > 10 ? '…' : ''}</div>` : ''}
+    ` : ''}
+    ${h.list.length ? html`<h5 style="margin:28px 0 6px">Saved sessions</h5>
+      <table class="table"><tbody>${h.list.map(x => html`<tr>
+        <td>${x.from || fmtDate(x.imported_at)}</td><td class="mono" style="width:90px">${x.duration || '—'}</td>
+        <td class="mono" style="width:140px;text-align:right">${gp(x.loot)}</td><td class="mono" style="width:140px;text-align:right">${gp(x.balance)}</td>
+        <td style="width:170px;text-align:right"><button class="btn btn-ghost" data-act="hunt-open" data-v="${x.id}" style="font-size:13px;padding-inline:8px">Open</button>
+          <button class="btn btn-ghost" data-act="hunt-delete" data-v="${x.id}" style="font-size:13px;padding-inline:8px;color:var(--bad)">Delete</button></td></tr>`)}</tbody></table>` : ''}
   </div>`;
 }
 
@@ -1298,6 +1355,30 @@ const ACTIONS = {
     render();
   },
 
+  // hunt reports
+  'hunt-paste': async () => {
+    try { S.hunt.text = await navigator.clipboard.readText(); render(); }
+    catch { toast('Couldn’t read the clipboard here. Click in the box and press Ctrl+V instead.', 'info'); }
+  },
+  'hunt-analyze': async () => { await guard(async () => { S.hunt.analysis = await post('hunts/analyze', { text: S.hunt.text }); await LOADERS.hunts(); }, 'Analyze hunt report'); render(); },
+  'hunt-open': async el => { await guard(async () => { S.hunt.analysis = await get('hunts/open', { id: el.dataset.v }); S.hunt.text = ''; }, 'Open hunt report'); render(true); },
+  'hunt-delete': async el => {
+    await guard(async () => { await post('hunts/delete', { id: el.dataset.v }); if (S.hunt.analysis && S.hunt.analysis.id === el.dataset.v) S.hunt.analysis = null; await LOADERS.hunts(); }, 'Delete hunt report');
+    render();
+  },
+  'hunt-apply': async () => {
+    await guard(async () => {
+      const r = await post('hunts/apply-tasks', { id: S.hunt.analysis.id });
+      S.hunt.analysis = await get('hunts/open', { id: S.hunt.analysis.id });
+      toast('Added to Weekly Tasks: ' + r.updated.map(u => `${u.name} +${num(u.added)}`).join(', '));
+    }, 'Add hunt loot to Weekly Tasks');
+    render();
+  },
+  'hunt-accept': async el => {
+    await guard(async () => { await post('accepted/toggle', { key: el.dataset.key }); await loadState(); S.hunt.analysis = await get('hunts/open', { id: S.hunt.analysis.id }); }, 'Add to Accepted Loot');
+    render();
+  },
+
   // generic modal
   'modal-close': () => { S.modal = null; render(); },
   'confirm-ok': async () => { const m = S.modal; S.modal = null; await guard(m.run); render(); },
@@ -1321,6 +1402,11 @@ const CHANGES = {
 let searchTimer = null, composeTimer = null;
 let weekTimer = null;
 const INPUTS = {
+  'hunt-text': el => {
+    const had = !!S.hunt.text.trim(); S.hunt.text = el.value;
+    const btn = document.querySelector('[data-act="hunt-analyze"]');
+    if (btn && had !== !!el.value.trim()) btn.disabled = !el.value.trim();
+  },
   'weekly-required': el => { S.week.required = el.value; },
   'weekly-search': el => {
     S.week.q = el.value; S.week.pick = null;

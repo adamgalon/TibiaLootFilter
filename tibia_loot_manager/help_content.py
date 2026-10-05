@@ -29,6 +29,10 @@ FAQ = [
     (_("When does the app go online?"),
      _("Only when you press Check for updates, Look up drops, or open a link or report. There are no background "
        "checks.")),
+    (_("How does the hunt report value my loot?"),
+     _("Coins count at face value. Every other item counts at the highest price an NPC pays for it, from your "
+       "installed client's data. The game's own Loot figure uses different prices, so the two totals can differ. "
+       "Items without an NPC buyer, or that couldn't be matched, are listed but not counted.")),
     (_("What is included in a problem report?"),
      _("Only what you see in the report window before sending: your text plus versions, the item and its sources, "
        "and update times. User folders, character folder numbers, character labels and e-mail addresses are "
@@ -39,6 +43,8 @@ RELEASE_NOTES = [
     ("0.5.0", "2026-10-05", [
         _("Profiles: separate Accepted Loot lists with history, compare, and import/export."),
         _("Weekly Tasks: track required, collected and remaining amounts for this week's Delivery Tasks."),
+        _("Hunt reports: paste a Hunt Analyzer session to see what the loot is worth to NPCs, which items aren't on "
+          "your Accepted Loot list, and add the looted amounts to this week's tasks."),
         _("Portable version: unzip and run, no Python needed."),
         _("Catalog browsing beyond the first 200 items, safer file writes, recovery from damaged files, and a "
           "working Cancel for updates."),

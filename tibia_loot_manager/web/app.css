@@ -173,6 +173,11 @@ button { font: inherit; }
 .task-num { width: 70px; min-height: 30px; padding: 3px 8px; text-align: right; }
 .task-step { padding: 4px 8px; font-size: 12.5px; min-width: 38px; }
 
+/* hunt reports */
+.stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+.stat { padding: 12px 14px; border-radius: 10px; background: var(--color-surface); display: flex; flex-direction: column; gap: 2px; }
+.stat-value { font-size: 20px; font-weight: 500; }
+
 /* inline label editor */
 .label-input { min-height: 28px; padding: 3px 8px; font-size: 13px; max-width: 180px; }
 

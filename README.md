@@ -75,6 +75,7 @@ This approach was chosen over a web source such as TibiaWiki's GIFs because:
 | Delivery Task list | The source candidate list with your edits applied. Excluded items stay visible under *Excluded by me*, and *Restore source defaults* discards your edits. |
 | My Accepted Loot | Your personal list: the Delivery Task list (switchable) plus items you added minus items you removed. Shows the item count, the limit warning and unverified items. **Profiles** keep separate lists (for characters, hunts or goals): create, switch, rename, duplicate, compare, export or import them, or copy a character's in-game list. Every change is kept in the profile's **history** and any version can be restored. The Delivery Task list edits are shared by all profiles. |
 | Weekly Tasks | Track this week's Delivery Tasks: required, collected and remaining amounts, with quick +1/+5/+10 buttons. Warns when a task item isn't on your Accepted Loot list. The week resets at Monday's server save (10:00 German time) and earlier weeks are kept as a summary. |
+| Hunt reports | Paste a session from Tibia's Hunt Analyzer ("Copy to clipboard"). Shows the session totals, each looted item matched to its client ID with the best NPC buy price, items it couldn't match, and whether each item is on your Accepted Loot list (one click to add it). Looted amounts can be added to this week's tasks once per session. The last 30 sessions are kept in `hunts.json`. Only the pasted text is read. |
 | Copy & export | A one-item-per-line checklist for adding items through the Cyclopedia, and a game-format file export. |
 | Install to character | Choose the character data folder, label the numbered folders, preview Merge or Replace, install with a backup, and restore backups. |
 | Data sources | Run *Check for updates*, see each source's type (official client data, community wiki, third-party estimate) and freshness, and set an optional list-size limit. |
@@ -185,6 +186,6 @@ offers to save it to the app's `reports` folder.
 
 ## Roadmap
 
-Planned features (Weekly Task planner, item-to-hunt finder, world-specific values, loot profiles, hunt-session
-analysis, market watchlist) are described in [docs/ROADMAP.md](docs/ROADMAP.md). They are kept separate from the
-core.
+Planned features (item-to-hunt finder, world-specific values, market watchlist) are described in
+[docs/ROADMAP.md](docs/ROADMAP.md). They are kept separate from the core. Weekly Tasks, loot profiles and hunt
+reports from that list are built.

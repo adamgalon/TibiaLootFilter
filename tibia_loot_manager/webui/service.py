@@ -11,7 +11,7 @@ import threading
 import webbrowser
 from pathlib import Path
 
-from .. import __version__, lootfile, paths, profiles, support, weekly
+from .. import __version__, hunts, lootfile, paths, profiles, support, weekly
 from ..datastore import DataStore
 from ..help_content import FAQ, RELEASE_NOTES
 from ..i18n import _
@@ -24,7 +24,7 @@ from ..sources import sprites, tibia_client, tibiawiki
 from ..sources.http import PoliteHttpClient
 from ..sources.registry import KIND_TEXT, SOURCES
 from ..sources.tibiawiki import TibiaWikiSource
-from ..storage import utc_now_iso
+from ..storage import read_json_checked, utc_now_iso, write_json_atomic
 from ..tibia_process import RUNNING, UNKNOWN, tibia_status
 from ..updates import CHANGED, NEW, REMOVED, apply_update, check_for_updates, record_failures
 from ..values import NPC_CHARGES, NPC_PAYS, STALE_AFTER_DAYS
@@ -695,6 +695,107 @@ class AppService:
                 self._save()
                 self._accepted_changed(_("Added this week's task items ({n})").format(n=len(added)))
             return {"added": added}
+
+    # --- hunt reports ------------------------------------------------------------------------
+
+    HUNTS_KEPT = 30
+
+    def _hunts_path(self) -> Path:
+        return self.store.root / "hunts.json"
+
+    def _hunts(self) -> list[dict]:
+        data, _moved = read_json_checked(self._hunts_path(), [], valid=lambda d: isinstance(d, list))
+        return [h for h in data if isinstance(h, dict) and isinstance(h.get("text"), str)]
+
+    def _analysis(self, record: dict) -> dict:
+        lib = self.library
+        report = hunts.parse_report(record["text"])
+        accepted_ids, _keys = self._accepted_members()
+        tracked = {}
+        active = {e.key: e for e in lib.delivery_entries()[0]}
+        for t in self._week()["tasks"]:
+            entry = active.get(t["key"])
+            if entry and entry.client_id is not None:
+                tracked[entry.client_id] = t
+        rows, total, unpriced = [], 0, 0
+        for line in report["items"]:
+            cid, how = hunts.match_item(line["name"], lib)
+            item = lib.items_by_id.get(cid) if cid is not None else None
+            each = hunts.COIN_VALUES.get(cid) or (hunts.best_npc_price(item) if item else None)
+            value = each * line["count"] if each else None
+            total += value or 0
+            unpriced += value is None and cid is not None
+            task = tracked.get(cid)
+            rows.append({"line": line["name"], "count": line["count"], "id": cid, "how": how,
+                         "name": item["name"] if item else None, "each": each, "value": value,
+                         "coin": cid in hunts.COIN_VALUES, "in_accepted": cid in accepted_ids,
+                         "task": {"name": task["name"], "remaining": max(0, task["required"] - task["collected"])}
+                         if task else None})
+        rows.sort(key=lambda r: -(r["value"] or 0))
+        return {"id": record["id"], "imported_at": record.get("imported_at"), "session": report,
+                "rows": rows, "npc_total": total, "unpriced": unpriced,
+                "unmatched": [r["line"] for r in rows if r["id"] is None],
+                "task_rows": sum(1 for r in rows if r["task"]),
+                "applied_this_week": record.get("applied_week") == self._week()["week_start"]}
+
+    def hunt_analyze(self, text: str) -> dict:
+        if not hunts.parse_report(text)["items"] and not hunts.parse_report(text)["monsters"]:
+            raise UserError(_("That doesn't look like a Hunt Analyzer report. In Tibia, open the Hunt Analyzer, "
+                              "choose “Copy to clipboard”, then paste it here."))
+        with self.lock:
+            records = self._hunts()
+            rid = hunts.report_id(text)
+            record = next((h for h in records if h["id"] == rid), None)
+            if record is None:
+                record = {"id": rid, "text": text, "imported_at": utc_now_iso()}
+                records = ([record] + records)[:self.HUNTS_KEPT]
+                write_json_atomic(self._hunts_path(), records, indent=None)
+            return self._analysis(record)
+
+    def hunt_list(self) -> dict:
+        with self.lock:
+            out = []
+            for h in self._hunts():
+                s = hunts.parse_report(h["text"])
+                out.append({"id": h["id"], "imported_at": h.get("imported_at"), "from": s["from"],
+                            "duration": s["duration"], "loot": s["loot"], "balance": s["balance"],
+                            "items": len(s["items"])})
+            return {"hunts": out}
+
+    def hunt_open(self, rid: str) -> dict:
+        with self.lock:
+            record = next((h for h in self._hunts() if h["id"] == rid), None)
+            if record is None:
+                raise UserError(_("That hunt report is no longer saved."))
+            return self._analysis(record)
+
+    def hunt_delete(self, rid: str) -> dict:
+        with self.lock:
+            write_json_atomic(self._hunts_path(), [h for h in self._hunts() if h["id"] != rid], indent=None)
+            return {}
+
+    def hunt_apply_tasks(self, rid: str) -> dict:
+        """Add a session's looted amounts to this week's tracked tasks (once per session and week)."""
+        with self.lock:
+            records = self._hunts()
+            record = next((h for h in records if h["id"] == rid), None)
+            if record is None:
+                raise UserError(_("That hunt report is no longer saved."))
+            week = self._week()
+            if record.get("applied_week") == week["week_start"]:
+                raise UserError(_("This session was already added to this week's tasks."))
+            analysis = self._analysis(record)
+            by_name = {}
+            for row in analysis["rows"]:
+                if row["task"]:
+                    by_name[row["task"]["name"]] = by_name.get(row["task"]["name"], 0) + row["count"]
+            for task in week["tasks"]:
+                if task["name"] in by_name:
+                    task["collected"] += by_name[task["name"]]
+            record["applied_week"] = week["week_start"]
+            write_json_atomic(self._hunts_path(), records, indent=None)
+            self._save()
+            return {"updated": [{"name": n, "added": c} for n, c in by_name.items()]}
 
     # --- Delivery Task list ---------------------------------------------------------------
 

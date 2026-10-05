@@ -71,7 +71,7 @@ This approach was chosen over a web source such as TibiaWiki's GIFs because:
 
 | Screen | Purpose |
 | --- | --- |
-| Item catalog | Every lootable item from your installed client. Search it, filter by category, view values, NPC prices and creature drops, and add or remove items from either list. |
+| Item catalog | Every lootable item from your installed client. Search it, filter by category, view values, NPC prices and creature drops, and add or remove items from either list. Star items as **favorites**, **save searches** (search text plus filters) to apply them again with one click, and **add or remove everything a search matches** at once, after a confirmation that shows how many items change. Bulk changes are recorded in the profile's history. |
 | Delivery Task list | The source candidate list with your edits applied. Excluded items stay visible under *Excluded by me*, and *Restore source defaults* discards your edits. |
 | My Accepted Loot | Your personal list: the Delivery Task list (switchable) plus items you added minus items you removed. Shows the item count, the limit warning and unverified items. **Profiles** keep separate lists (for characters, hunts or goals): create, switch, rename, duplicate, compare, export or import them, or copy a character's in-game list. Every change is kept in the profile's **history** and any version can be restored. The Delivery Task list edits are shared by all profiles. |
 | Weekly Tasks | Track this week's Delivery Tasks: required, collected and remaining amounts, with quick +1/+5/+10 buttons. Warns when a task item isn't on your Accepted Loot list. The week resets at Monday's server save (10:00 German time) and earlier weeks are kept as a summary. |

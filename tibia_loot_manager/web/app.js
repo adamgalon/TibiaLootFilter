@@ -322,7 +322,7 @@ function viewCatalog() {
           <input class="input" data-input="search" placeholder="Search items by name or ID" value="${c.q}" style="padding-left:32px" aria-label="Search items">
         </div>
         <div class="seg" role="radiogroup" aria-label="Which items">
-          ${[['all', 'All items'], ['del', 'Delivery Task'], ['mine', 'In my list']].map(([k, l]) => html`
+          ${[['all', 'All items'], ['del', 'Delivery Task'], ['mine', 'In my list'], ['fav', 'Favorites']].map(([k, l]) => html`
             <label class="seg-opt nowrap"><input type="radio" name="catseg" data-act="cat-seg" data-v="${k}" ${raw(c.seg === k ? 'checked' : '')}>${l}</label>`)}
         </div>
       </div>
@@ -336,6 +336,7 @@ function viewCatalog() {
         </select>
         <span style="margin-left:auto;font-size:12px;color:var(--muted)">${c.rows.length < c.total ? `${num(c.rows.length)} of ${num(c.total)}` : num(c.total)} items</span>
       </div>
+      ${viewCatalogTools()}
       <div class="cat-grid rule-strong" style="padding:8px 10px" role="row">
         <span></span><span class="kicker">Item · notes</span><span class="kicker">Item ID</span><span class="kicker">Lists</span><span></span>
       </div>
@@ -345,13 +346,32 @@ function viewCatalog() {
   </div>`;
 }
 
+const catFiltered = c => !!(c.q.trim() || c.seg !== 'all' || c.cat || c.idf !== 'all');
+const searchOf = c => ({ q: c.q, seg: c.seg, cat: c.cat, idf: c.idf });
+
+function viewCatalogTools() {
+  const c = S.cat, saved = S.app.saved_searches || [];
+  const isCurrent = s => s.q === c.q.trim() && s.seg === c.seg && s.cat === c.cat && s.idf === c.idf;
+  const filtered = catFiltered(c);
+  if (!saved.length && !filtered) return '';
+  return html`<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:-2px 0 10px">
+    ${saved.map((s, i) => html`<span class="chip saved-chip ${isCurrent(s) ? 'on' : ''}">
+      <button class="saved-apply" data-act="search-apply" data-v="${i}" title="Apply this saved search">${icon('bookmark-simple')}${s.name}</button>
+      <button class="saved-x" data-act="search-delete" data-v="${s.name}" title="Delete saved search" aria-label="Delete saved search ${s.name}">${icon('x')}</button></span>`)}
+    ${filtered && !saved.some(isCurrent) ? html`<button class="chip" data-act="search-save-open" style="display:inline-flex;align-items:center;gap:5px">${icon('plus')}Save this search</button>` : ''}
+    ${filtered && c.total ? html`<span style="margin-left:auto;display:flex;gap:4px">
+      <button class="btn btn-ghost" data-act="bulk" data-v="add" style="font-size:12.5px;padding:3px 8px;min-height:28px">${icon('list-plus')}Add all to my list</button>
+      <button class="btn btn-ghost" data-act="bulk" data-v="remove" style="font-size:12.5px;padding:3px 8px;min-height:28px">${icon('minus-circle')}Remove all</button></span>` : ''}
+  </div>`;
+}
+
 function viewCatalogRows() {
   const c = S.cat;
   if (!c.rows.length) return html`<div style="padding:30px 10px;color:var(--muted)">${c.q ? html`No items match “${c.q}”.` : 'No items match these filters.'}</div>`;
   return html`${c.rows.map(r => html`
     <div class="cat-grid cat-row ${c.sel === r.key ? 'sel' : ''}" data-act="cat-select" data-key="${r.key}">
       ${spriteSlot(r.id, 34)}
-      <div style="min-width:0"><div class="ellipsis" style="font-size:14px">${r.name}</div><div class="ellipsis" style="font-size:12px;color:var(--muted)">${r.sub}</div></div>
+      <div style="min-width:0"><div class="ellipsis" style="font-size:14px">${r.favorite ? html`<i class="ph-fill ph-star fav-star" title="Favorite" aria-label="Favorite"></i> ` : ''}${r.name}</div><div class="ellipsis" style="font-size:12px;color:var(--muted)">${r.sub}</div></div>
       <div class="mono" style="font-size:12.5px;color:${r.id ? 'var(--color-text)' : 'var(--warn)'}">${r.id ?? '—'}</div>
       <div style="display:flex;gap:5px;flex-wrap:wrap">
         ${r.in_delivery ? html`<span class="tag tag-accent tag-sm">Delivery</span>` : ''}
@@ -379,7 +399,9 @@ function viewDetail() {
   <aside class="detail" aria-label="Item details">
     <div style="display:flex;gap:14px;align-items:center">
       ${spriteSlot(d.id, 64, 'lg')}
-      <div style="min-width:0"><div style="font-size:20px;font-weight:500;line-height:1.2">${d.name}</div><div style="font-size:12.5px;color:var(--muted);margin-top:3px">${d.category}</div></div>
+      <div style="min-width:0;flex:1"><div style="font-size:20px;font-weight:500;line-height:1.2">${d.name}</div><div style="font-size:12.5px;color:var(--muted);margin-top:3px">${d.category}</div></div>
+      <button class="icon-btn fav-btn ${d.favorite ? 'on' : ''}" data-act="detail-fav" title="${d.favorite ? 'Remove from favorites' : 'Add to favorites'}" aria-label="${d.favorite ? 'Remove from favorites' : 'Add to favorites'}" aria-pressed="${d.favorite}">
+        <i class="${d.favorite ? 'ph-fill' : 'ph'} ph-star"></i></button>
     </div>
     <div style="display:flex;flex-direction:column;gap:8px">
       ${d.in_accepted
@@ -876,7 +898,7 @@ function viewModal() {
   if (!m) return '';
   const views = { profiles: viewProfilesModal, 'profile-new': viewProfileNewModal, history: viewHistoryModal,
     update: viewUpdateModal, install: viewInstallModal, restore: viewRestoreModal, report: viewReportModal,
-    confirm: viewConfirmModal, error: viewErrorModal };
+    confirm: viewConfirmModal, error: viewErrorModal, 'search-save': viewSearchSaveModal };
   return html`<div class="backdrop" data-backdrop role="dialog" aria-modal="true">${views[m.kind](m)}</div>`;
 }
 
@@ -964,6 +986,16 @@ function viewHistoryModal(m) {
         <div><div style="font-size:14px">${e.description}</div><div style="font-size:12px;color:var(--muted)">${fmtDate(e.at)}${e.count !== null && e.count !== undefined ? ' · ' + plural(e.count, 'item', 'items') : ''}</div></div>
         ${i === 0 ? html`<span class="muted" style="font-size:12.5px">Current</span>` : html`<button class="btn btn-ghost" data-act="history-restore" data-v="${e.index}" style="font-size:13px;padding-inline:8px">Restore</button>`}
       </div>`)}</div></div>`;
+}
+
+function viewSearchSaveModal(m) {
+  return html`<div class="dialog" style="width:min(460px,100%)">
+    <div class="dialog-title">Save this search</div>
+    <div style="font-size:13px;color:var(--muted)">Saves the search text and filters so you can apply them again with one click.</div>
+    <div class="field"><label for="search-name">Name</label>
+      <input id="search-name" class="input" data-input="search-name" value="${m.name}" maxlength="40" placeholder="e.g. Rare armors" data-autofocus></div>
+    <div class="dialog-actions"><button class="btn btn-secondary" data-act="modal-close">Cancel</button>
+      <button class="btn btn-primary" data-act="search-save">Save</button></div></div>`;
 }
 
 function viewConfirmModal(m) {
@@ -1194,6 +1226,43 @@ const ACTIONS = {
   },
   'cat-select': async el => { await guard(() => loadItem(el.dataset.key)); render(); },
   'cat-toggle': async el => { await guard(async () => { await post('accepted/toggle', { key: el.dataset.key }); await loadState(); await loadCatalog(false); }); render(); },
+  'detail-fav': async () => { await guard(async () => { await post('favorites/toggle', { key: S.cat.sel }); await loadCatalog(false); }); render(); },
+  'search-apply': async el => {
+    const s = (S.app.saved_searches || [])[+el.dataset.v];
+    if (!s) return;
+    Object.assign(S.cat, { q: s.q, seg: s.seg, cat: s.cat, idf: s.idf, sel: null });
+    await guard(() => loadCatalog()); render(true);
+  },
+  'search-delete': async el => { await guard(async () => { await post('searches/delete', { name: el.dataset.v }); await loadState(); }); render(); },
+  'search-save-open': () => {
+    const c = S.cat;
+    S.modal = { kind: 'search-save', name: c.q.trim() || c.cat || { del: 'Delivery Task', mine: 'In my list', fav: 'Favorites' }[c.seg] || '' };
+    render();
+  },
+  'search-save': async () => {
+    await guard(async () => { await post('searches/save', { name: S.modal.name, ...searchOf(S.cat) }); S.modal = null; await loadState(); }, 'Save search');
+    render();
+  },
+  'bulk': async el => {
+    const add = el.dataset.v === 'add';
+    await guard(async () => {
+      const r = await post('accepted/bulk', { ...searchOf(S.cat), add, dry_run: true });
+      if (!r.changes) { toast(add ? 'All of these are already on your list.' : 'None of these are on your list.', 'info'); return; }
+      const extra = add && r.unverified ? ` ${plural(r.unverified, 'of them has', 'of them have')} an unverified item ID and won’t be exported until it’s verified.` : '';
+      S.modal = {
+        kind: 'confirm', title: add ? `Add ${plural(r.changes, 'item', 'items')}?` : `Remove ${plural(r.changes, 'item', 'items')}?`,
+        body: (add ? `Adds every item matching this search that isn’t on “${(S.app.profile || {}).name}” yet.` : `Removes every item matching this search from “${(S.app.profile || {}).name}”.`)
+          + `${r.matching !== r.changes ? ` ${num(r.matching - r.changes)} of the ${num(r.matching)} matching items ${add ? 'are already on it' : 'aren’t on it'}.` : ''}${extra} You can undo this from the profile’s history.`,
+        ok: add ? 'Add all' : 'Remove all',
+        run: async () => {
+          const done = await post('accepted/bulk', { ...searchOf(S.cat), add });
+          await loadState(); await loadCatalog(false);
+          toast(`${add ? 'Added' : 'Removed'} ${plural(done.changed, 'item', 'items')}.`);
+        },
+      };
+    }, add ? 'Add all to Accepted Loot' : 'Remove all from Accepted Loot');
+    render();
+  },
   'detail-acc': async () => { await guard(async () => { await post('accepted/toggle', { key: S.cat.sel }); await loadState(); await loadCatalog(false); }); render(); },
   'detail-del': async () => { await guard(async () => { await post('delivery/toggle', { key: S.cat.sel }); await loadState(); await loadCatalog(false); }); render(); },
   'detail-lookup': async () => {
@@ -1417,6 +1486,7 @@ const INPUTS = {
     }, 200);
   },
   'profile-name': el => { S.modal.name = el.value; },
+  'search-name': el => { S.modal.name = el.value; },
   'search': el => {
     S.cat.q = el.value;
     clearTimeout(searchTimer);
@@ -1473,6 +1543,7 @@ document.addEventListener('keydown', e => {
     return;
   }
   if (el.dataset && el.dataset.input === 'profile-name' && e.key === 'Enter') { ACTIONS['profile-create'](); return; }
+  if (el.dataset && el.dataset.input === 'search-name' && e.key === 'Enter') { ACTIONS['search-save'](); return; }
   if (el.dataset && el.dataset.input === 'label') {
     if (e.key === 'Enter') { guard(async () => { await post('install/label', { folder: el.dataset.folder, label: el.value }); S.ins.editing = null; await LOADERS.install(); render(); }); }
     else if (e.key === 'Escape') { S.ins.editing = null; render(); }

@@ -398,6 +398,48 @@ class Library:
                 if key not in self.state.accepted_excluded:
                     self.state.accepted_excluded.append(key)
 
+    def set_accepted_many(self, keys: list[str], add: bool) -> list[str]:
+        """Add or remove many rows at once (catalog keys: "3031" or "wiki:Title").
+
+        Same result as toggling each key, but the list is rebuilt a fixed number of times instead of
+        once per key. Returns the keys whose membership actually changed.
+        """
+        active = self.accepted_entries()[0]
+        ids = {e.client_id for e in active if e.client_id is not None}
+        present = {e.key for e in active}
+
+        def member(key):
+            return key in present or (key.isdigit() and int(key) in ids)
+
+        wanted = [k for k in dict.fromkeys(keys) if member(k) != add]
+        if not wanted:
+            return []
+        if add:
+            unexclude = set()
+            for key in wanted:
+                unexclude |= self._keys_for(int(key)) if key.isdigit() else {key}
+            self.state.accepted_excluded = [k for k in self.state.accepted_excluded if k not in unexclude]
+            ids = {e.client_id for e in self.accepted_entries()[0] if e.client_id is not None}
+            for key in wanted:
+                if key.isdigit() and int(key) not in ids and int(key) not in self.state.accepted_extra:
+                    self.state.accepted_extra.append(int(key))
+        else:
+            drop = {int(k) for k in wanted if k.isdigit()}
+            self.state.accepted_extra = [c for c in self.state.accepted_extra if c not in drop]
+            still = self.accepted_entries()[0]
+            targets = set(wanted)
+            excluded = set(self.state.accepted_excluded)
+            for entry in still:
+                if entry.key in targets or (entry.client_id is not None and str(entry.client_id) in targets):
+                    keys_now = {entry.key} | (self._keys_for(entry.client_id) if entry.client_id is not None else set())
+                    for k in sorted(keys_now - excluded):
+                        self.state.accepted_excluded.append(k)
+                        excluded.add(k)
+        active = self.accepted_entries()[0]
+        ids = {e.client_id for e in active if e.client_id is not None}
+        present = {e.key for e in active}
+        return [k for k in wanted if member(k) == add]
+
     def add_to_delivery(self, client_id: int) -> None:
         keys = self._keys_for(client_id)
         self.state.delivery_removed = [k for k in self.state.delivery_removed if k not in keys]

@@ -173,6 +173,15 @@ button { font: inherit; }
 .task-num { width: 70px; min-height: 30px; padding: 3px 8px; text-align: right; }
 .task-step { padding: 4px 8px; font-size: 12.5px; min-width: 38px; }
 
+/* favorites and saved searches */
+.fav-star { color: var(--warn); font-size: 12px; }
+.fav-btn { font-size: 20px; color: var(--muted); flex: none; }
+.fav-btn.on { color: var(--warn); }
+.saved-chip { display: inline-flex; align-items: center; gap: 2px; padding: 0 2px 0 8px; }
+.saved-chip button { background: none; border: 0; color: inherit; font: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; padding: 4px 2px; }
+.saved-chip .saved-x { opacity: .6; padding: 4px; border-radius: 6px; }
+.saved-chip .saved-x:hover { opacity: 1; background: var(--color-surface); }
+
 /* hunt reports */
 .stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
 .stat { padding: 12px 14px; border-radius: 10px; background: var(--color-surface); display: flex; flex-direction: column; gap: 2px; }

@@ -11,6 +11,7 @@ from pathlib import Path
 from .storage import read_json, write_json_atomic
 
 SCHEMA_VERSION = 1
+SEARCH_FIELDS = ("name", "q", "seg", "cat", "idf")
 
 
 def _valid_profile(pid, p) -> bool:
@@ -47,6 +48,10 @@ class UserState:
     weekly: dict = field(default_factory=dict)  # {"week_start", "tasks": [{"key", "name", "required", "collected"}]}
     weekly_archive: list = field(default_factory=list)  # summaries of earlier weeks, newest first
 
+    # Catalog conveniences, shared by all profiles
+    favorites: list[str] = field(default_factory=list)  # catalog row keys ("3031" or "wiki:Title")
+    saved_searches: list = field(default_factory=list)  # [{"name", "q", "seg", "cat", "idf"}]
+
     schema_version: int = SCHEMA_VERSION
 
     @classmethod
@@ -70,6 +75,11 @@ class UserState:
                 ok = valid_week(value)
             elif f.name == "weekly_archive":
                 ok = isinstance(value, list) and all(isinstance(x, dict) for x in value)
+            elif f.name == "favorites":
+                ok = isinstance(value, list) and all(isinstance(x, str) for x in value)
+            elif f.name == "saved_searches":
+                ok = isinstance(value, list) and all(
+                    isinstance(x, dict) and all(isinstance(x.get(k), str) for k in SEARCH_FIELDS) for x in value)
             elif isinstance(default, bool):
                 ok = isinstance(value, bool)
             elif isinstance(default, list):

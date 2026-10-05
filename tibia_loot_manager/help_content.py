@@ -43,6 +43,7 @@ RELEASE_NOTES = [
     ("0.5.0", "2026-10-05", [
         _("Profiles: separate Accepted Loot lists with history, compare, and import/export."),
         _("Weekly Tasks: track required, collected and remaining amounts for this week's Delivery Tasks."),
+        _("Catalog: favorites, saved searches, and adding or removing everything a search matches at once."),
         _("Hunt reports: paste a Hunt Analyzer session to see what the loot is worth to NPCs, which items aren't on "
           "your Accepted Loot list, and add the looted amounts to this week's tasks."),
         _("Portable version: unzip and run, no Python needed."),

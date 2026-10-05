@@ -181,6 +181,8 @@ class AppService:
                             "has_contact": config.has_contact},
                 "app_data": str(self.store.root),
                 "sprite_version": self._sprite_version(),
+                "favorites": len(lib.state.favorites),
+                "saved_searches": lib.state.saved_searches,
             }
 
     def set_theme(self, theme: str) -> dict:
@@ -231,48 +233,106 @@ class AppService:
     def catalog(self, q: str = "", seg: str = "all", cat: str = "", idf: str = "all", offset: int = 0,
                 limit: int = PAGE_SIZE) -> dict:
         with self.lock:
-            lib = self.library
-            query = (q or "").strip().lower()
-            accepted_ids, accepted_keys = self._accepted_members()
-            delivery_ids = lib.delivery_ids()
-            rows = []
-            for cid, item in lib.items_by_id.items():
-                if query:
-                    wiki = lib.wiki_title(cid)
-                    if not (matches_search(query, item["name"], cid) or (wiki and matches_search(query, wiki, None))):
-                        continue
-                if cat and item["category"] != cat:
-                    continue
-                state, _code = self._id_state(cid)
-                if idf != "all" and state != idf:
-                    continue
-                in_del, in_acc = cid in delivery_ids, cid in accepted_ids
-                if (seg == "del" and not in_del) or (seg == "mine" and not in_acc):
-                    continue
-                note = lib.item_note(cid)
-                rows.append({"key": str(cid), "id": cid, "name": item["name"], "category": item["category"],
-                             "sub": item["category"] + (" · " + note if note else ""), "state": state,
-                             "in_delivery": in_del, "in_accepted": in_acc})
-            # Delivery items with no verified client ID are listed but never exported.
-            if not cat and idf != VERIFIED:
-                active_delivery = {e.key for e in lib.delivery_entries()[0]}
-                for entry in lib.unresolved_delivery():
-                    if query and not matches_search(query, entry.name, None):
-                        continue
-                    if idf != "all" and entry.mapping_state != idf:
-                        continue
-                    in_del = entry.key in active_delivery  # the user may have excluded it
-                    in_acc = entry.key in accepted_keys
-                    if (seg == "del" and not in_del) or (seg == "mine" and not in_acc):
-                        continue
-                    rows.append({"key": entry.key, "id": None, "name": entry.name,
-                                 "category": entry.delivery["task_category"],
-                                 "sub": entry.delivery["task_category"] + " · " + STATE_TEXT[entry.mapping_state],
-                                 "state": entry.mapping_state, "in_delivery": in_del, "in_accepted": in_acc})
-            rows.sort(key=lambda r: (r["name"].lower(), r["id"] or 0))
+            rows = self._catalog_rows(q, seg, cat, idf)
             offset = max(0, offset)
             limit = min(max(1, limit), MAX_PAGE)
             return {"total": len(rows), "rows": rows[offset:offset + limit], "offset": offset}
+
+    def _catalog_rows(self, q: str, seg: str, cat: str, idf: str) -> list[dict]:
+        """Every catalog row that matches the filters, sorted by name (the caller holds the lock)."""
+        lib = self.library
+        query = (q or "").strip().lower()
+        accepted_ids, accepted_keys = self._accepted_members()
+        delivery_ids = lib.delivery_ids()
+        favorites = set(lib.state.favorites)
+        rows = []
+        for cid, item in lib.items_by_id.items():
+            if query:
+                wiki = lib.wiki_title(cid)
+                if not (matches_search(query, item["name"], cid) or (wiki and matches_search(query, wiki, None))):
+                    continue
+            if cat and item["category"] != cat:
+                continue
+            state, _code = self._id_state(cid)
+            if idf != "all" and state != idf:
+                continue
+            in_del, in_acc, fav = cid in delivery_ids, cid in accepted_ids, str(cid) in favorites
+            if (seg == "del" and not in_del) or (seg == "mine" and not in_acc) or (seg == "fav" and not fav):
+                continue
+            note = lib.item_note(cid)
+            rows.append({"key": str(cid), "id": cid, "name": item["name"], "category": item["category"],
+                         "sub": item["category"] + (" · " + note if note else ""), "state": state,
+                         "in_delivery": in_del, "in_accepted": in_acc, "favorite": fav})
+        # Delivery items with no verified client ID are listed but never exported.
+        if not cat and idf != VERIFIED:
+            active_delivery = {e.key for e in lib.delivery_entries()[0]}
+            for entry in lib.unresolved_delivery():
+                if query and not matches_search(query, entry.name, None):
+                    continue
+                if idf != "all" and entry.mapping_state != idf:
+                    continue
+                in_del = entry.key in active_delivery  # the user may have excluded it
+                in_acc, fav = entry.key in accepted_keys, entry.key in favorites
+                if (seg == "del" and not in_del) or (seg == "mine" and not in_acc) or (seg == "fav" and not fav):
+                    continue
+                rows.append({"key": entry.key, "id": None, "name": entry.name,
+                             "category": entry.delivery["task_category"],
+                             "sub": entry.delivery["task_category"] + " · " + STATE_TEXT[entry.mapping_state],
+                             "state": entry.mapping_state, "in_delivery": in_del, "in_accepted": in_acc,
+                             "favorite": fav})
+        rows.sort(key=lambda r: (r["name"].lower(), r["id"] or 0))
+        return rows
+
+    # --- favorites, saved searches, bulk edits -----------------------------------------------
+
+    SAVED_SEARCHES_KEPT = 20
+
+    def toggle_favorite(self, key: str) -> dict:
+        with self.lock:
+            favs = self.library.state.favorites
+            if key in favs:
+                favs.remove(key)
+            else:
+                if not (key.isdigit() and int(key) in self.library.items_by_id) and \
+                        key.removeprefix("wiki:") not in self.library.delivery["items"]:
+                    raise UserError(_("Unknown item."))
+                favs.append(key)
+            self._save()
+            return {"favorite": key in favs, "count": len(favs)}
+
+    def save_search(self, name: str, q: str, seg: str, cat: str, idf: str) -> dict:
+        with self.lock:
+            name = " ".join((name or "").split())[:40]
+            if not name:
+                raise UserError(_("Give the search a name."))
+            saved = [s for s in self.library.state.saved_searches if s["name"].lower() != name.lower()]
+            saved.insert(0, {"name": name, "q": (q or "").strip()[:100], "seg": seg or "all", "cat": cat or "",
+                             "idf": idf or "all"})
+            self.library.state.saved_searches = saved[:self.SAVED_SEARCHES_KEPT]
+            self._save()
+            return {"saved_searches": self.library.state.saved_searches}
+
+    def delete_search(self, name: str) -> dict:
+        with self.lock:
+            st = self.library.state
+            st.saved_searches = [s for s in st.saved_searches if s["name"] != name]
+            self._save()
+            return {"saved_searches": st.saved_searches}
+
+    def accepted_bulk(self, q: str, seg: str, cat: str, idf: str, add: bool, dry_run: bool = False) -> dict:
+        """Add (or remove) every catalog row the filters match. A dry run only counts."""
+        with self.lock:
+            rows = self._catalog_rows(q, seg, cat, idf)
+            todo = [r for r in rows if r["in_accepted"] != add]
+            if dry_run:
+                return {"matching": len(rows), "changes": len(todo),
+                        "unverified": sum(r["state"] != VERIFIED for r in todo)}
+            changed = self.library.set_accepted_many([r["key"] for r in todo], add)
+            if changed:
+                self._save()
+                text = _("Added {n} items at once") if add else _("Removed {n} items at once")
+                self._accepted_changed(text.format(n=len(changed)) + (f" (“{q.strip()}”)" if q.strip() else ""))
+            return {"changed": len(changed)}
 
     def item(self, key: str) -> dict:
         with self.lock:
@@ -334,6 +394,7 @@ class AppService:
                 "wiki": {"title": wiki_page["title"], "url": wiki_page["url"], "pageid": wiki_page.get("pageid"),
                          "kind": wiki_page.get("primarytype")} if wiki_page else None,
                 "in_accepted": in_acc, "in_delivery": in_del, "is_candidate": bool(record),
+                "favorite": key in lib.state.favorites,
                 "delivery_text": delivery_text,
                 "qty": f"{record['min_qty']}–{record['max_qty']}" if record and record.get("min_qty") else None,
                 "delivery_source": {"url": dsrc.get("url"), "revised": dsrc.get("revision_timestamp"),

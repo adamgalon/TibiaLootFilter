@@ -43,6 +43,10 @@ class UserState:
     profiles: dict[str, dict] = field(default_factory=dict)
     active_profile: str = ""
 
+    # Weekly Task tracker (see weekly.py)
+    weekly: dict = field(default_factory=dict)  # {"week_start", "tasks": [{"key", "name", "required", "collected"}]}
+    weekly_archive: list = field(default_factory=list)  # summaries of earlier weeks, newest first
+
     schema_version: int = SCHEMA_VERSION
 
     @classmethod
@@ -61,6 +65,11 @@ class UserState:
             value, default = data[f.name], getattr(defaults, f.name)
             if f.name == "profiles":
                 ok = isinstance(value, dict) and all(_valid_profile(k, v) for k, v in value.items())
+            elif f.name == "weekly":
+                from .weekly import valid_week
+                ok = valid_week(value)
+            elif f.name == "weekly_archive":
+                ok = isinstance(value, list) and all(isinstance(x, dict) for x in value)
             elif isinstance(default, bool):
                 ok = isinstance(value, bool)
             elif isinstance(default, list):

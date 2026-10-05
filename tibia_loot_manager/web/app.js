@@ -70,12 +70,14 @@ const S = {
   ins: { data: null, selected: null, mode: 'merge', editing: null },
   src: { data: null },
   help: { data: null, open: 2 },
+  week: { data: null, q: '', results: [], pick: null, required: '' },
   onb: { step: 1, info: null, startFull: true },
 };
 
 const SCREENS = [
   ['catalog', 'Item catalog', 'books'], ['delivery', 'Delivery Task list', 'package'],
-  ['accepted', 'My Accepted Loot', 'check-square'], ['export', 'Copy & export', 'export'],
+  ['accepted', 'My Accepted Loot', 'check-square'], ['weekly', 'Weekly Tasks', 'calendar-check'],
+  ['export', 'Copy & export', 'export'],
   ['install', 'Install to character', 'download-simple'], ['sources', 'Data sources', 'database'],
   ['help', 'Help & Support', 'lifebuoy'],
 ];
@@ -126,6 +128,7 @@ const LOADERS = {
   install: async () => { S.ins.data = await get('install', { selected: S.ins.selected }); S.ins.selected = S.ins.data.selected; },
   sources: async () => { S.src.data = await get('sources'); },
   help: async () => { S.help.data = await get('help'); },
+  weekly: async () => { S.week.data = await get('weekly'); },
 };
 
 async function go(screen) {
@@ -179,7 +182,7 @@ function viewToast() {
 function viewApp() {
   const a = S.app;
   const counts = { catalog: num(a.counts.catalog), delivery: num(a.counts.delivery), accepted: num(a.counts.accepted) };
-  const views = { catalog: viewCatalog, delivery: viewDelivery, accepted: viewAccepted, export: viewExport,
+  const views = { catalog: viewCatalog, delivery: viewDelivery, accepted: viewAccepted, weekly: viewWeekly, export: viewExport,
     install: viewInstall, sources: viewSources, help: viewHelp };
   return html`
   <div style="flex:1;display:flex;min-height:0">
@@ -522,6 +525,81 @@ function viewAccepted() {
         </tr>`)}</tbody>
     </table>
     ${!d.rows.length ? html`<div style="padding:24px 8px;color:var(--muted)">Nothing here.</div>` : ''}
+  </div>`;
+}
+
+// ---------- weekly tasks ------------------------------------------------------------
+
+function viewWeeklyResults() {
+  const w = S.week;
+  if (!w.q.trim()) return '';
+  if (!w.results.length) return html`<div class="muted" style="padding:8px 4px;font-size:13px">No Delivery Task item matches “${w.q}”.</div>`;
+  return html`<div class="week-results">${w.results.map(r => html`
+    <button class="week-result ${w.pick && w.pick.key === r.key ? 'on' : ''}" data-act="week-pick" data-key="${r.key}" ${raw(r.tracked ? 'disabled' : '')}>
+      ${spriteSlot(r.id, 28)}<span style="flex:1;text-align:left">${r.name}<span style="display:block;font-size:12px;color:var(--muted)">${r.category || ''} · asks for ${r.min ?? '?'}–${r.max ?? '?'}</span></span>
+      ${r.tracked ? html`<span class="tag tag-neutral tag-sm">Tracked</span>` : ''}
+    </button>`)}</div>`;
+}
+
+function viewWeekly() {
+  const d = S.week.data, w = S.week;
+  if (!d) return '';
+  const done = d.tasks.filter(t => t.done).length;
+  const left = d.tasks.reduce((n, t) => n + t.remaining, 0);
+  const missing = d.tasks.filter(t => !t.in_accepted && t.exportable);
+  const reset = new Date(d.next_reset), days = Math.max(0, Math.ceil((reset - Date.now()) / 86400000));
+  return html`
+  <div class="page" style="max-width:1080px">
+    <h1>Weekly Tasks</h1>
+    <div class="page-sub">Week of ${fmtDate(d.week_start, false)} · resets at server save ${fmtDate(d.next_reset)} (${days === 0 ? 'today' : plural(days, 'day', 'days')})</div>
+    ${d.new_week ? html`<div class="note" style="margin-top:14px">${icon('calendar-check', 'class="accent"')}<div>A new week started at Monday’s server save. Last week’s tasks were moved to <b>Previous weeks</b> below.</div></div>` : ''}
+    <div style="display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin:22px 0 6px">
+      <span style="font-size:44px;font-weight:500;letter-spacing:-.02em;line-height:1">${num(done)}<span class="muted" style="font-size:28px"> / ${num(d.tasks.length)}</span></span>
+      <span style="font-size:15px;color:var(--muted)">tasks done${d.tasks.length ? ` · ${plural(left, 'item', 'items')} still to collect` : ''}</span>
+    </div>
+    ${missing.length ? html`<div class="note warn-bg" style="margin:14px 0">${icon('warning', 'class="warn"')}
+      <div style="flex:1"><div style="font-weight:500;margin-bottom:3px">${plural(missing.length, 'task item isn’t', 'task items aren’t')} on your Accepted Loot list</div>
+        <div class="muted">Profile “${d.profile || ''}” won’t loot ${missing.map(t => t.name).join(', ')}.</div></div>
+      <button class="btn btn-primary" data-act="week-add-missing" style="flex:none;align-self:center">Add ${missing.length === 1 ? 'it' : 'them'}</button></div>` : ''}
+    <div class="panel" style="margin:18px 0;gap:10px">
+      <h5 style="margin:0">Add this week’s task</h5>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <div style="position:relative;flex:1;min-width:240px">
+          ${icon('magnifying-glass', 'style="position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--muted)"')}
+          <input class="input" data-input="weekly-search" value="${w.q}" placeholder="Find a Delivery Task item" style="padding-left:32px" aria-label="Find a Delivery Task item">
+        </div>
+        <label style="display:flex;gap:6px;align-items:center;font-size:13px">Required
+          <input class="input mono" data-input="weekly-required" inputmode="numeric" value="${w.required}" placeholder="${w.pick ? w.pick.min : ''}" style="width:90px"></label>
+        <button class="btn btn-primary" data-act="week-add" ${raw(w.pick ? '' : 'disabled')}>${icon('plus')}${w.pick ? 'Add ' + w.pick.name : 'Add task'}</button>
+      </div>
+      <div id="week-results">${viewWeeklyResults()}</div>
+    </div>
+    <div class="week-grid">${d.tasks.map(t => html`
+      <div class="task-card ${t.done ? 'done' : ''}">
+        <div style="display:flex;gap:12px;align-items:center">
+          ${spriteSlot(t.id, 40)}
+          <div style="flex:1;min-width:0"><div class="ellipsis" style="font-weight:500">${t.name}</div><div style="font-size:12px;color:var(--muted)">${t.category || ''} · asks for ${t.min ?? '?'}–${t.max ?? '?'}</div></div>
+          ${t.done ? html`<span class="tag tag-verified tag-sm">${icon('check')} Done</span>` : ''}
+          <button class="icon-btn" data-act="week-remove" data-key="${t.key}" title="Remove task" aria-label="Remove ${t.name}">${icon('trash')}</button>
+        </div>
+        <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="${t.required}" aria-valuenow="${Math.min(t.collected, t.required)}"><span style="width:${Math.min(100, Math.round(100 * t.collected / Math.max(1, t.required)))}%"></span></div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input class="input mono task-num" data-change="week-collected" data-key="${t.key}" value="${t.collected}" inputmode="numeric" aria-label="Collected">
+          <span class="muted">of</span>
+          <input class="input mono task-num" data-change="week-required" data-key="${t.key}" value="${t.required}" inputmode="numeric" aria-label="Required">
+          <span class="nowrap" style="flex:1;text-align:right;font-size:12.5px;color:var(--muted)">${t.remaining ? num(t.remaining) + ' left' : 'complete'}</span>
+        </div>
+        <div style="display:flex;gap:6px;justify-content:flex-end">
+          ${[-1, 1, 5, 10].map(n => html`<button class="btn btn-secondary task-step" data-act="week-step" data-key="${t.key}" data-v="${n}" aria-label="${n > 0 ? 'Add ' + n : 'Subtract 1'}">${n > 0 ? '+' + n : '−1'}</button>`)}
+        </div>
+        ${!t.in_accepted && t.exportable ? html`<div style="font-size:12px" class="warn">${icon('warning')} Not on your Accepted Loot list</div>` : ''}
+      </div>`)}</div>
+    ${!d.tasks.length ? html`<div class="muted" style="padding:20px 4px">No tasks yet. Add the Delivery Tasks you were given this week to track what you still need.</div>` : ''}
+    ${d.archive.length ? html`<details style="margin-top:26px"><summary style="cursor:pointer;font-weight:500">Previous weeks (${d.archive.length})</summary>
+      <table class="table" style="margin-top:8px"><tbody>${d.archive.map(a => html`<tr>
+        <td style="width:160px">Week of ${fmtDate(a.week_start, false)}</td>
+        <td class="mono" style="width:90px">${a.done} / ${a.tasks}</td>
+        <td style="font-size:12.5px;color:var(--muted)">${(a.items || []).map(i => `${i.name} ${i.collected}/${i.required}`).join(' · ')}</td></tr>`)}</tbody></table></details>` : ''}
   </div>`;
 }
 
@@ -1206,12 +1284,28 @@ const ACTIONS = {
     render();
   },
 
+  // weekly tasks
+  'week-pick': el => { const r = S.week.results.find(x => x.key === el.dataset.key); S.week.pick = r; if (!S.week.required) S.week.required = String(r.min || ''); render(); },
+  'week-add': async () => {
+    const w = S.week;
+    await guard(async () => { await post('weekly/add', { key: w.pick.key, required: w.required || null }); w.pick = null; w.q = ''; w.results = []; w.required = ''; await LOADERS.weekly(); }, 'Add weekly task');
+    render();
+  },
+  'week-step': async el => { await guard(async () => { await post('weekly/set', { key: el.dataset.key, delta: Number(el.dataset.v) }); await LOADERS.weekly(); }, 'Update task'); render(); },
+  'week-remove': async el => { await guard(async () => { await post('weekly/remove', { key: el.dataset.key }); await LOADERS.weekly(); }, 'Remove task'); render(); },
+  'week-add-missing': async () => {
+    await guard(async () => { const r = await post('weekly/add-missing'); await loadState(); await LOADERS.weekly(); toast(`Added ${r.added.join(', ')} to your Accepted Loot list.`); }, 'Add task items');
+    render();
+  },
+
   // generic modal
   'modal-close': () => { S.modal = null; render(); },
   'confirm-ok': async () => { const m = S.modal; S.modal = null; await guard(m.run); render(); },
 };
 
 const CHANGES = {
+  'week-collected': async el => { await guard(async () => { await post('weekly/set', { key: el.dataset.key, collected: el.value }); }, 'Update task'); await guard(LOADERS.weekly); render(); },
+  'week-required': async el => { await guard(async () => { await post('weekly/set', { key: el.dataset.key, required: el.value }); }, 'Update task'); await guard(LOADERS.weekly); render(); },
   'profile-switch': el => switchProfile(el.value),
   'profile-char': el => { S.modal.char = el.value; },
   'profile-cmp-a': el => { S.modal.cmpA = el.value; },
@@ -1225,7 +1319,17 @@ const CHANGES = {
 };
 
 let searchTimer = null, composeTimer = null;
+let weekTimer = null;
 const INPUTS = {
+  'weekly-required': el => { S.week.required = el.value; },
+  'weekly-search': el => {
+    S.week.q = el.value; S.week.pick = null;
+    clearTimeout(weekTimer);
+    weekTimer = setTimeout(async () => {
+      await guard(async () => { S.week.results = S.week.q.trim() ? (await get('weekly/search', { q: S.week.q })).rows : []; });
+      const box = document.getElementById('week-results'); if (box) box.innerHTML = val(viewWeeklyResults());
+    }, 200);
+  },
   'profile-name': el => { S.modal.name = el.value; },
   'search': el => {
     S.cat.q = el.value;

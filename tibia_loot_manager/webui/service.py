@@ -11,7 +11,7 @@ import threading
 import webbrowser
 from pathlib import Path
 
-from .. import __version__, lootfile, paths, profiles, support
+from .. import __version__, lootfile, paths, profiles, support, weekly
 from ..datastore import DataStore
 from ..help_content import FAQ, RELEASE_NOTES
 from ..i18n import _
@@ -584,6 +584,117 @@ class AppService:
             self._save()
             self._accepted_changed(_("Copied from the character's loot file"))
             return {"id": pid, "count": len(ids)}
+
+    # --- Weekly Task tracker ----------------------------------------------------------------
+
+    def _week(self) -> dict:
+        """This week's tracker data, starting a new week (and archiving the old one) after server save."""
+        st = self.library.state
+        week, archive, rolled = weekly.roll_over(st.weekly, st.weekly_archive)
+        if rolled or week is not st.weekly:
+            st.weekly, st.weekly_archive = week, archive
+            self._save()
+        self._week_rolled = rolled or getattr(self, "_week_rolled", False)
+        return st.weekly
+
+    def _delivery_record(self, key: str) -> dict:
+        entry = self._find(self.library.delivery_entries()[0], key)
+        return (entry.delivery or {}) if entry else {}
+
+    def weekly_overview(self) -> dict:
+        with self.lock:
+            week = self._week()
+            accepted_ids, accepted_keys = self._accepted_members()
+            active = {e.key: e for e in self.library.delivery_entries()[0]}
+            tasks = []
+            for t in week["tasks"]:
+                entry = active.get(t["key"])
+                cid = entry.client_id if entry else None
+                record = (entry.delivery or {}) if entry else {}
+                tasks.append({**t, "id": cid, "remaining": max(0, t["required"] - t["collected"]),
+                              "done": t["collected"] >= t["required"],
+                              "min": record.get("min_qty"), "max": record.get("max_qty"),
+                              "category": record.get("task_category"),
+                              "in_accepted": (cid in accepted_ids) if cid is not None else (t["key"] in accepted_keys),
+                              "exportable": bool(entry and entry.exportable)})
+            new_week = getattr(self, "_week_rolled", False)
+            self._week_rolled = False
+            return {"week_start": week["week_start"], "next_reset": weekly.next_reset().isoformat(),
+                    "tasks": tasks, "archive": self.library.state.weekly_archive, "new_week": new_week,
+                    "profile": self.library.state.profiles.get(self.library.state.active_profile, {}).get("name")}
+
+    def weekly_search(self, q: str) -> dict:
+        with self.lock:
+            query = (q or "").strip().lower()
+            tracked = {t["key"] for t in self._week()["tasks"]}
+            rows = []
+            for e in self.library.delivery_entries()[0]:
+                if query and query not in e.name.lower() and query != str(e.client_id):
+                    continue
+                d = e.delivery or {}
+                rows.append({"key": e.key, "name": e.name, "id": e.client_id, "min": d.get("min_qty"),
+                             "max": d.get("max_qty"), "category": d.get("task_category"),
+                             "tracked": e.key in tracked})
+            rows.sort(key=lambda r: (not r["name"].lower().startswith(query), r["name"].lower()))
+            return {"rows": rows[:12]}
+
+    def weekly_add(self, key: str, required) -> dict:
+        with self.lock:
+            entry = self._find(self.library.delivery_entries()[0], key)
+            if entry is None:
+                raise UserError(_("Only items on your Delivery Task list can be tracked as weekly tasks."))
+            week = self._week()
+            if any(t["key"] == entry.key for t in week["tasks"]):
+                raise UserError(_("{name} is already on this week's list.").format(name=entry.name))
+            d = entry.delivery or {}
+            try:
+                amount = weekly.clamp_required(int(required or d.get("min_qty") or 1), d.get("min_qty"), d.get("max_qty"))
+            except (TypeError, ValueError) as e:
+                raise UserError(str(e) if str(e) else _("Enter the required amount.")) from None
+            week["tasks"].append({"key": entry.key, "name": entry.name, "required": amount, "collected": 0})
+            self._save()
+            return {}
+
+    def weekly_set(self, key: str, required=None, collected=None, delta=None) -> dict:
+        with self.lock:
+            task = next((t for t in self._week()["tasks"] if t["key"] == key), None)
+            if task is None:
+                raise UserError(_("That task is no longer on this week's list."))
+            try:
+                if required is not None:
+                    d = self._delivery_record(key)
+                    task["required"] = weekly.clamp_required(int(required), d.get("min_qty"), d.get("max_qty"))
+                if collected is not None:
+                    task["collected"] = max(0, int(collected))
+                if delta is not None:
+                    task["collected"] = max(0, task["collected"] + int(delta))
+            except (TypeError, ValueError) as e:
+                raise UserError(str(e) if str(e) else _("Enter a whole number.")) from None
+            self._save()
+            return {"collected": task["collected"], "required": task["required"]}
+
+    def weekly_remove(self, key: str) -> dict:
+        with self.lock:
+            week = self._week()
+            week["tasks"] = [t for t in week["tasks"] if t["key"] != key]
+            self._save()
+            return {}
+
+    def weekly_add_missing_to_accepted(self) -> dict:
+        """Put every tracked task item on the active Accepted Loot list."""
+        with self.lock:
+            accepted_ids, accepted_keys = self._accepted_members()
+            added = []
+            active = {e.key: e for e in self.library.delivery_entries()[0]}
+            for t in self._week()["tasks"]:
+                entry = active.get(t["key"])
+                if entry and entry.client_id is not None and entry.client_id not in accepted_ids:
+                    self.library.add_to_accepted(entry.client_id)
+                    added.append(entry.name)
+            if added:
+                self._save()
+                self._accepted_changed(_("Added this week's task items ({n})").format(n=len(added)))
+            return {"added": added}
 
     # --- Delivery Task list ---------------------------------------------------------------
 

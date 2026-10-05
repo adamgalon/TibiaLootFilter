@@ -38,6 +38,7 @@ FAQ = [
 RELEASE_NOTES = [
     ("0.5.0", "2026-10-05", [
         _("Profiles: separate Accepted Loot lists with history, compare, and import/export."),
+        _("Weekly Tasks: track required, collected and remaining amounts for this week's Delivery Tasks."),
         _("Portable version: unzip and run, no Python needed."),
         _("Catalog browsing beyond the first 200 items, safer file writes, recovery from damaged files, and a "
           "working Cancel for updates."),

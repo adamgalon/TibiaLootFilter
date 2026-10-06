@@ -195,7 +195,7 @@ Like loot-filter strictness in other games, each level is a ready-made Accepted 
 anything worth something) to **Uber+1 Strict** (only the most valuable items). Every item gets a tier:
 
 | Tier | NPC buys it for at least | Lowest level that still takes it |
-|---|---|---|
+| --- | --- | --- |
 | S | 100,000 gp | Uber+1 Strict |
 | A | 20,000 gp | Uber Strict |
 | B | 5,000 gp | Very Strict |
@@ -232,7 +232,7 @@ The **recommended junk** list is built from two price sources, and an item is ju
 - what buyers paid for it this month on your world's Market (TibiaMarket, a third-party estimate).
 
 | Limit (Antica, October 2026) | Items skipped |
-|---|---|
+| --- | --- |
 | 20 gp | about 230 |
 | 50 gp | about 280 |
 | 100 gp | about 350 |

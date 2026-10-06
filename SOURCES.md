@@ -11,6 +11,7 @@ Evaluated on 2026-10-03 against Tibia client 15.33.df9fa3.
 | [TibiaWiki Fandom – Items](https://tibia.fandom.com/wiki/Items) | No | Category index pages | The client already provides the full catalog with IDs. |
 | [TibiaWiki BR – Weekly Tasks](https://www.tibiawiki.com.br/wiki/Weekly_Tasks), [Itens](https://www.tibiawiki.com.br/wiki/Itens) | No | Portuguese description of weekly tasks (revised 2026-08-18) | Useful for checking by hand. Adds nothing over the Fandom data for this purpose. |
 | [TibiaWiki API project](https://github.com/benjaminkomen/TibiaWikiApi) / [tibiawiki.dev](https://tibiawiki.dev/) | No | JSON form of the same infobox fields (`itemid`, `droppedby`, `npcvalue`, …) | Unofficial, but responsive and current when checked. Bulk export (`/api/items?expand=true`) is refused above 5,000 pages (the wiki has about 6,560 item pages) and has no paging, so it cannot provide the full index. The wiki's own API is used instead. |
+| [TibiaMarket](https://tibiamarket.top) API (`api.tibiamarket.top/market_values`, `/world_data`) | **Yes**, market prices (third-party estimate) | Per world and item: current buy and sell offers, monthly and daily averages, number of trades this month, time of the snapshot | A fansite that records the in-game Market. One request per world returns every item (about 5,000 items, 3 MB). Downloaded only when you choose a world or press Refresh, then cached for offline use. Worlds are refreshed at different rates (some daily, some monthly), so the app shows each world's data age. No key needed. |
 | [TibiaPal Deliveries](https://tibiapal.com/deliveries) | No (reference) | Delivery-item market values | Says it is not maintained for Summer 2026 items and that values vary by world. Not used as a live source. |
 | [Official Quick Loot guide](https://www.tibia.com/gameguides/?section=controls&subtopic=manual) | Linked | User workflow (Cyclopedia) | Linked from the Copy & export tab. |
 | [PCGamingWiki](https://www.pcgamingwiki.com/wiki/Tibia), [TibiaQA](https://www.tibiaqa.com/3985/how-transfer-edit-characters-loot-list-without-the-need-log-the-character), [TibiaBR forum](https://forums.tibiabr.com/threads/512965-Feedback-Quick-Looting) | Leads only | File location and older JSON examples | The format is checked against the user's own files instead. |
@@ -31,9 +32,15 @@ tab. Each value records its source, type, retrieval time and, for market data, t
 
 ## Market values
 
-No dependable market source per world was found among the sources above, so the app shows no market values.
-To add one, implement `values.MarketValueProvider` (returning `ItemValue(kind=MARKET, world=..., retrieved_at=...)`)
-and register it in `values.MARKET_PROVIDERS`.
+Market prices come from TibiaMarket for one world the user chooses (`sources/tibiamarket.py`). They are labelled
+as a third-party estimate everywhere they appear, with the world and the snapshot time. They're used for:
+
+- the recommended Skipped Loot list (`junk.py`): an item is junk only when both its highest NPC price (official
+  client data) and what buyers paid on that world's Market this month are under the user's limit. An item with
+  fewer than 3 trades this month has no trusted market price and is never called junk;
+- the item details panel in the catalog.
+
+Strictness levels and hunt reports still use NPC prices only.
 
 ## Request etiquette
 

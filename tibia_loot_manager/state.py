@@ -21,6 +21,11 @@ def _valid_profile(pid, p) -> bool:
                                                              for x in p.get("extra", []))
             and isinstance(p.get("excluded", []), list) and all(isinstance(x, str) for x in p.get("excluded", []))
             and isinstance(p.get("preset", ""), str)
+            and isinstance(p.get("skip_recommended", False), bool)
+            and isinstance(p.get("skip_limit", 100), int) and not isinstance(p.get("skip_limit", 100), bool)
+            and all(isinstance(p.get(k, []), list) and all(isinstance(x, int) and not isinstance(x, bool)
+                                                           for x in p.get(k, []))
+                    for k in ("skip_items", "skip_extra", "skip_excluded"))
             and isinstance(p.get("preset_items", []), list) and all(isinstance(x, int) and not isinstance(x, bool)
                                                                     for x in p.get("preset_items", [])))
 
@@ -37,6 +42,13 @@ class UserState:
     accepted_excluded: list[str] = field(default_factory=list)  # entry keys removed by the user
     accepted_preset: str = ""  # strictness level id (see strictness.py), "" for none
     accepted_preset_items: list[int] = field(default_factory=list)  # what the level held when last reviewed
+
+    # Personal Skipped Loot list (Tibia's other Quick Loot list: loot everything except these)
+    skipped_recommended: bool = False  # include the recommended junk list (see junk.py)
+    skipped_limit: int = 100  # junk = worth less than this many gp
+    skipped_items: list[int] = field(default_factory=list)  # what the recommendation held when last reviewed
+    skipped_extra: list[int] = field(default_factory=list)  # client IDs skipped by hand
+    skipped_excluded: list[int] = field(default_factory=list)  # recommended items the user wants to keep looting
 
     # Settings
     characterdata_dir: str | None = None
@@ -57,6 +69,7 @@ class UserState:
     favorites: list[str] = field(default_factory=list)  # catalog row keys ("3031" or "wiki:Title")
     saved_searches: list = field(default_factory=list)  # [{"name", "q", "seg", "cat", "idf"}]
     hunt_choices: dict[str, str] = field(default_factory=dict)  # looted-line name key -> client ID the user picked
+    market_world: str = ""  # game world whose market prices were fetched
 
     schema_version: int = SCHEMA_VERSION
 
@@ -83,8 +96,10 @@ class UserState:
                 ok = isinstance(value, list) and all(isinstance(x, dict) for x in value)
             elif f.name == "accepted_preset":
                 ok = isinstance(value, str)
-            elif f.name == "accepted_preset_items":
+            elif f.name in ("accepted_preset_items", "skipped_items", "skipped_extra", "skipped_excluded"):
                 ok = isinstance(value, list) and all(isinstance(x, int) and not isinstance(x, bool) for x in value)
+            elif f.name == "skipped_limit":
+                ok = isinstance(value, int) and not isinstance(value, bool) and value > 0
             elif f.name == "favorites":
                 ok = isinstance(value, list) and all(isinstance(x, str) for x in value)
             elif f.name == "saved_searches":

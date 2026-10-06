@@ -29,6 +29,14 @@ FAQ = [
     (_("When does the app go online?"),
      _("Only when you press Check for updates, Look up drops, or open a link or report. There are no background "
        "checks.")),
+    (_("What's the difference between Accepted Loot and Skipped Loot?"),
+     _("They're the two lists of Tibia's Quick Loot, and a character uses one at a time. In Accepted Loot mode it "
+       "loots only the items on that list; in Skipped Loot mode it loots everything except the items on that list. "
+       "On the Install screen, choose which list to install; the other one is left as it is.")),
+    (_("Where do market prices come from?"),
+     _("From TibiaMarket, a fansite that records the in-game Market, for the world you choose on the Skipped Loot "
+       "screen. They're estimates: they vary by world and some worlds are updated less often (the app shows how old "
+       "the data is). They're downloaded only when you choose a world or press Refresh.")),
     (_("How do strictness levels decide what's valuable?"),
      _("Each item gets a tier from the highest price an NPC pays for it in your installed client's data. Items no "
        "NPC buys are tiered by their Market category (soul cores high, decoration low). A level takes its own tier "
@@ -48,6 +56,9 @@ RELEASE_NOTES = [
     ("0.5.0", "2026-10-05", [
         _("Profiles: separate Accepted Loot lists with history, compare, and import/export."),
         _("Weekly Tasks: track required, collected and remaining amounts for this week's Delivery Tasks."),
+        _("Skipped Loot: a second list for Tibia's Skipped Loot mode, with a recommended junk list from NPC and "
+          "Market prices (TibiaMarket, per world) and a price slider. Install either list to a character."),
+        _("Fix: clicking an item you added yourself on My Accepted Loot showed “Unknown item”."),
         _("Hunt reports: when several items share a looted name, pick the right one before it counts; the pick is "
           "remembered."),
         _("Installing or restoring when the app can't tell whether Tibia is running now needs an explicit "

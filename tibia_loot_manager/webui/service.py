@@ -11,17 +11,18 @@ import threading
 import webbrowser
 from pathlib import Path
 
-from .. import __version__, hunts, lootfile, paths, profiles, strictness, support, weekly
+from .. import __version__, hunts, junk, lootfile, paths, profiles, strictness, support, weekly
 from ..datastore import DataStore
 from ..help_content import FAQ, RELEASE_NOTES
 from ..i18n import _
 from ..library import (
     ID_STATUS_DETAIL, MAPPING_STATE, ORIGIN_DELIVERY_SOURCE, ORIGIN_DELIVERY_USER, ORIGIN_MANUAL, ORIGIN_PRESET,
+    ORIGIN_RECOMMENDED,
     STATE_TEXT, UNVERIFIED, VERIFIED, Entry, delivery_url, name_key,
 )
 from ..search import matches_search
-from ..sources import sprites, tibia_client, tibiawiki
-from ..sources.http import PoliteHttpClient
+from ..sources import sprites, tibia_client, tibiamarket, tibiawiki
+from ..sources.http import PoliteHttpClient, SourceError
 from ..sources.registry import KIND_TEXT, SOURCES
 from ..sources.tibiawiki import TibiaWikiSource
 from ..storage import read_json_checked, utc_now_iso, write_json_atomic
@@ -86,6 +87,7 @@ class AppService:
         self._pending_install = None  # (folder, plan) shown in the last preview
         self._images = None  # (key, sprites.ItemImages | None)
         self._tiers = None  # (library, rules, {client id: (tier, reason)})
+        self._market_cache = None  # ((world, file mtime), cached market data)
 
     # --- shared helpers ---------------------------------------------------------------
 
@@ -183,6 +185,7 @@ class AppService:
                 "app_data": str(self.store.root),
                 "sprite_version": self._sprite_version(),
                 "favorites": len(lib.state.favorites),
+                "skipped_count": len(lib.skipped_entries()[0]),
                 "saved_searches": lib.state.saved_searches,
             }
 
@@ -384,9 +387,199 @@ class AppService:
                 name=strictness.level_name(st.accepted_preset)))
             return {}
 
+    # --- market prices -------------------------------------------------------------------------
+
+    def _market_path(self, world: str) -> Path:
+        return self.store.cache / "market" / f"{world}.json"
+
+    def _market(self) -> dict:
+        """The cached market data for the chosen world, or {} (re-read when the file changes)."""
+        world = self.library.state.market_world
+        if not tibiamarket.valid_world(world):
+            return {}
+        path = self._market_path(world)
+        try:
+            stamp = (world, path.stat().st_mtime)
+        except OSError:
+            return {}
+        if not self._market_cache or self._market_cache[0] != stamp:
+            data, _moved = read_json_checked(path, {}, valid=lambda d: isinstance(d, dict)
+                                             and isinstance(d.get("items"), dict))
+            self._market_cache = (stamp, data)
+        return self._market_cache[1]
+
+    def _market_info(self) -> dict | None:
+        data = self._market()
+        if not data:
+            return None
+        src = data.get("source") or {}
+        return {"world": src.get("world"), "fetched_at": src.get("fetched_at"), "data_time": src.get("data_time"),
+                "items": len(data.get("items", {})), "url": src.get("url"),
+                "kind": KIND_TEXT[SOURCES[tibiamarket.SOURCE_ID].kind]}
+
+    def market_worlds(self) -> dict:
+        """Every world TibiaMarket tracks (a network request, made only when the user asks)."""
+        try:
+            worlds = tibiamarket.fetch_worlds(self.http or PoliteHttpClient())
+        except SourceError as e:
+            raise UserError(_("Couldn't load the world list from TibiaMarket: {error}").format(error=e)) from None
+        return {"worlds": worlds, "current": self.library.state.market_world}
+
+    def market_fetch(self, world: str) -> dict:
+        """Download one world's market prices (about 3 MB) and keep them for offline use."""
+        if not tibiamarket.valid_world(world):
+            raise UserError(_("Choose a world from the list."))
+        try:
+            data = tibiamarket.fetch_world(self.http or PoliteHttpClient(timeout=60), world)  # outside the lock
+        except SourceError as e:
+            self.store.record_source(tibiamarket.SOURCE_ID, False, str(e))
+            raise UserError(_("Couldn't download market prices for {world}: {error}. Prices you fetched before "
+                              "are kept.").format(world=world, error=e)) from None
+        with self.lock:
+            write_json_atomic(self._market_path(world), data, indent=None)
+            self.library.state.market_world = world
+            self._save()
+            self.store.record_source(tibiamarket.SOURCE_ID, True, detail={"world": world})
+            return {"market": self._market_info()}
+
+    # --- Skipped Loot --------------------------------------------------------------------------
+
+    def _junk(self) -> dict[int, dict]:
+        return junk.candidates(self.library, self._market().get("items", {}), self.library.delivery_ids())
+
+    def _skipped_for(self, snap: dict) -> list[Entry]:
+        st = self.library.state
+        saved = profiles.snapshot(st)
+        profiles.apply(st, snap)
+        try:
+            return self.library.skipped_entries()[0]
+        finally:
+            profiles.apply(st, saved)
+
+    def _skipped_change(self, snap: dict) -> dict:
+        before = {e.client_id: e.name for e in self.library.skipped_entries()[0]}
+        entries = self._skipped_for(snap)
+        after = {e.client_id: e.name for e in entries}
+        return {"add": sorted((after[k] for k in after.keys() - before.keys()), key=str.lower),
+                "remove": sorted((before[k] for k in before.keys() - after.keys()), key=str.lower),
+                "entries": entries}
+
+    def _pending_junk(self, cands: dict) -> dict | None:
+        """New market prices change the recommendation; shown for review, not applied."""
+        st = self.library.state
+        if not st.skipped_recommended or not self._market():
+            return None
+        now = junk.junk_ids(cands, st.skipped_limit)
+        if set(now) == set(st.skipped_items):
+            return None
+        snap = profiles.snapshot(st)
+        snap["skip_items"] = now
+        change = self._skipped_change(snap)
+        return {"add": change["add"], "remove": change["remove"]}
+
+    def skipped(self, tab: str = "active") -> dict:
+        with self.lock:
+            lib, st = self.library, self.library.state
+            active, removed = lib.skipped_entries()
+            cands = self._junk()
+            market = self._market().get("items", {})
+            accepted_ids = self._accepted_members()[0]
+            on_list = {e.client_id for e in active}
+            pool = {"active": active, "added": [e for e in active if e.origin == ORIGIN_MANUAL],
+                    "removed": removed}.get(tab, active)
+            rows = []
+            for e in sorted(pool, key=lambda x: x.name.lower()):
+                item = lib.items_by_id[e.client_id]
+                rows.append({"key": str(e.client_id), "id": e.client_id, "name": e.name, "on": e.client_id in on_list,
+                             "npc": hunts.best_npc_price(item), "market": junk.market_value(market.get(str(e.client_id))),
+                             "from": _("Recommended junk") if e.origin == ORIGIN_RECOMMENDED else _("Skipped by me"),
+                             "also_accepted": e.client_id in accepted_ids})
+            return {
+                "tab": tab, "rows": rows,
+                "counts": {"total": len(active), "recommended": sum(e.origin == ORIGIN_RECOMMENDED for e in active),
+                           "added": sum(e.origin == ORIGIN_MANUAL for e in active), "removed": len(removed),
+                           "exportable": sum(e.exportable for e in active)},
+                "recommend": {"on": st.skipped_recommended, "limit": st.skipped_limit,
+                              "stops": junk.stop_counts(cands) if market else [],
+                              "pending": self._pending_junk(cands)},
+                "market": self._market_info(),
+                "conflicts": sorted((e.name for e in active if e.client_id in accepted_ids), key=str.lower),
+            }
+
+    def _check_limit(self, limit: int) -> int:
+        if not isinstance(limit, int) or not 1 <= limit <= 10_000_000:
+            raise UserError(_("Choose a price limit."))
+        return limit
+
+    def skipped_preview(self, on: bool, limit: int) -> dict:
+        with self.lock:
+            self._check_limit(limit)
+            if on and not self._market():
+                raise UserError(_("Fetch market prices for your world first."))
+            snap = profiles.snapshot(self.library.state)
+            snap.update(skip_recommended=on, skip_limit=limit,
+                        skip_items=junk.junk_ids(self._junk(), limit) if on else [])
+            change = self._skipped_change(snap)
+            accepted_ids = self._accepted_members()[0]
+            return {"on": on, "limit": limit, "add": change["add"], "remove": change["remove"],
+                    "total_after": len(change["entries"]),
+                    "conflicts_after": sorted((e.name for e in change["entries"] if e.client_id in accepted_ids),
+                                              key=str.lower)}
+
+    def skipped_apply(self, on: bool, limit: int) -> dict:
+        with self.lock:
+            self._check_limit(limit)
+            if on and not self._market():
+                raise UserError(_("Fetch market prices for your world first."))
+            st = self.library.state
+            st.skipped_recommended, st.skipped_limit = bool(on), limit
+            st.skipped_items = junk.junk_ids(self._junk(), limit) if on else []
+            self._save()
+            self._accepted_changed(_("Skipped Loot: recommended junk worth under {gp} gp").format(gp=f"{limit:,}")
+                                   if on else _("Skipped Loot: stopped using the recommended junk list"))
+            return {"count": len(self.library.skipped_entries()[0])}
+
+    def skipped_accept_changes(self) -> dict:
+        with self.lock:
+            st = self.library.state
+            if not st.skipped_recommended:
+                raise UserError(_("This profile doesn't use the recommended junk list."))
+            st.skipped_items = junk.junk_ids(self._junk(), st.skipped_limit)
+            self._save()
+            self._accepted_changed(_("Skipped Loot: recommended junk updated with new prices"))
+            return {}
+
+    def toggle_skipped(self, key: str) -> dict:
+        with self.lock:
+            lib = self.library
+            key = key.removeprefix("client:")
+            if not key.isdigit() or int(key) not in lib.items_by_id:
+                raise UserError(_("Only items with a Tibia item ID can be skipped."))
+            cid = int(key)
+            now_in = cid not in {e.client_id for e in lib.skipped_entries()[0]}
+            if now_in:
+                lib.add_to_skipped(cid)
+            else:
+                lib.remove_from_skipped(cid)
+            self._save()
+            self._accepted_changed((_("Skipped {name}") if now_in else _("Stopped skipping {name}")).format(
+                name=lib.item_name(cid)))
+            return {"in_skipped": now_in}
+
     # --- favorites, saved searches, bulk edits -----------------------------------------------
 
     SAVED_SEARCHES_KEPT = 20
+
+    def _item_market(self, cid: int | None) -> dict | None:
+        rec = (self._market().get("items") or {}).get(str(cid)) if cid is not None else None
+        info = self._market_info()
+        if not rec or not info:
+            return {"world": info["world"], "none": True} if info else None
+        return {"world": info["world"], "value": junk.market_value(rec), "sell": rec.get("sell_offer"),
+                "buy": rec.get("buy_offer"), "avg_buy": rec.get("month_average_buy"),
+                "avg_sell": rec.get("month_average_sell"),
+                "trades": int((rec.get("month_sold") or 0) + (rec.get("month_bought") or 0)),
+                "data_time": rec.get("time"), "kind": info["kind"], "url": info["url"]}
 
     def _tier_info(self, cid: int) -> dict:
         tier, reason = self._tier_map()[cid]
@@ -441,6 +634,7 @@ class AppService:
             return {"changed": len(changed)}
 
     def item(self, key: str) -> dict:
+        key = key.removeprefix("client:")  # list rows use "client:<id>" keys; the catalog uses the bare ID
         with self.lock:
             lib = self.library
             cid = int(key) if key.isdigit() else None
@@ -501,6 +695,8 @@ class AppService:
                          "kind": wiki_page.get("primarytype")} if wiki_page else None,
                 "in_accepted": in_acc, "in_delivery": in_del, "is_candidate": bool(record),
                 "favorite": key in lib.state.favorites,
+                "in_skipped": cid is not None and cid in {e.client_id for e in lib.skipped_entries()[0]},
+                "market": self._item_market(cid),
                 "tier": self._tier_info(cid) if cid is not None else None,
                 "delivery_text": delivery_text,
                 "qty": f"{record['min_qty']}–{record['max_qty']}" if record and record.get("min_qty") else None,
@@ -1160,6 +1356,7 @@ class AppService:
                 "format_ok": report.validated, "format_message": report.message, "characters": rows,
                 "selected": selected, "backups": backups,
                 "export_count": sum(e.exportable for e in active), "blocked": sum(not e.exportable for e in active),
+                "skipped_export_count": len(lib.skipped_ids()),
             }
 
     def set_folder(self, use_default: bool = False) -> dict:
@@ -1187,21 +1384,27 @@ class AppService:
             self._save()
             return {}
 
-    def install_preview(self, folder_id: str, mode: str) -> dict:
+    def install_preview(self, folder_id: str, mode: str, target: str = lootfile.MODE_ACCEPTED) -> dict:
         with self.lock:
             lib = self.library
+            if target not in (lootfile.MODE_ACCEPTED, lootfile.MODE_SKIPPED):
+                raise UserError(_("Unknown list."))
+            skipped = target == lootfile.MODE_SKIPPED
             if not self._format().validated:
                 raise UserError(_("The loot file format could not be confirmed, so installing is disabled."))
             folder = self._folder(folder_id)
             if folder.error:
                 raise UserError(_("This character's loot file can't be read: {error}").format(error=folder.error))
-            ids = sorted(lib.accepted_ids())
+            ids = sorted(lib.skipped_ids() if skipped else lib.accepted_ids())
             if not ids:
-                raise UserError(_("Your Accepted Loot list has no exportable items."))
-            plan = lootfile.plan_install(folder.data, ids, mode)
+                raise UserError(_("Your Skipped Loot list has no exportable items.") if skipped
+                                else _("Your Accepted Loot list has no exportable items."))
+            plan = lootfile.plan_install(folder.data, ids, mode, target)
             self._pending_install = (folder, plan)
             label = lib.state.character_labels.get(folder_id)
-            blocked = [e.name for e in lib.accepted_entries()[0] if not e.exportable]
+            entries = lib.skipped_entries()[0] if skipped else lib.accepted_entries()[0]
+            blocked = [e.name for e in entries if not e.exportable]
+            this_list, other_list = (_("Skipped"), _("Accepted")) if skipped else (_("Accepted"), _("Skipped"))
             mode_text = {lootfile.MODE_ACCEPTED: _("Accepted Loot"), lootfile.MODE_SKIPPED: _("Skipped Loot"),
                          None: _("no file yet")}
             rows = []
@@ -1210,23 +1413,28 @@ class AppService:
                              "value": lootfile.FILE_NAME})
             if plan.mode_change:
                 rows.append({"icon": "swap", "tone": "warn",
-                             "label": _("Loot mode changes: {old} → Accepted Loot").format(
-                                 old=mode_text.get(plan.old_mode, plan.old_mode)), "value": "listType"})
-            rows.append({"icon": "plus-circle", "tone": "ok", "label": _("Items added to the Accepted list"),
-                         "value": f"+{len(plan.added)}"})
+                             "label": _("Loot mode changes: {old} → {new}").format(
+                                 old=mode_text.get(plan.old_mode, plan.old_mode), new=mode_text[target]),
+                             "value": "listType"})
+            rows.append({"icon": "plus-circle", "tone": "ok", "label": _("Items added to the {list} list").format(
+                list=this_list), "value": f"+{len(plan.added)}"})
             rows.append({"icon": "equals", "tone": "muted", "label": _("Already on the list, kept"),
                          "value": str(len(plan.kept))})
             if plan.mode == lootfile.REPLACE:
-                rows.append({"icon": "minus-circle", "tone": "bad", "label": _("Items removed from the Accepted list"),
+                rows.append({"icon": "minus-circle", "tone": "bad",
+                             "label": _("Items removed from the {list} list").format(list=this_list),
                              "value": f"−{len(plan.removed)}"})
-            rows.append({"icon": "lock-simple", "tone": "muted", "label": _("Skipped list left unchanged"),
-                         "value": str(len(plan.new_data.get(lootfile.KEY_SKIPPED, [])))})
-            total = len(plan.new_data[lootfile.KEY_ACCEPTED])
+            rows.append({"icon": "lock-simple", "tone": "muted",
+                         "label": _("{list} list left unchanged").format(list=other_list),
+                         "value": str(len(plan.new_data.get(plan.other_key, [])))})
+            total = len(plan.new_data[plan.list_key])
             return {
+                "target": target, "list_name": mode_text[target],
                 "mode": plan.mode, "folder": folder_id, "label": label,
                 "rows": rows, "total": total,
                 "removed": [lib.item_name(i) for i in plan.removed],
-                "also_skipped": [lib.item_name(i) for i in plan.also_skipped],
+                "also_other": [lib.item_name(i) for i in plan.also_other], "other_name": mode_text[
+                    lootfile.MODE_ACCEPTED if skipped else lootfile.MODE_SKIPPED],
                 "blocked": blocked,
                 "limit": limit_message(total, lib.state.loot_list_limit),
                 **self._tibia_flags(),
@@ -1243,10 +1451,12 @@ class AppService:
             raise UserError(_("Couldn't check whether Tibia is running. Close the game, tick “I've closed Tibia”, "
                               "then try again."))
 
-    def install_apply(self, folder_id: str, mode: str, confirmed_closed: bool = False) -> dict:
+    def install_apply(self, folder_id: str, mode: str, confirmed_closed: bool = False,
+                      target: str = lootfile.MODE_ACCEPTED) -> dict:
         with self.lock:
             pending = self._pending_install
-            if not pending or pending[0].folder_id != folder_id or pending[1].mode != mode:
+            if not pending or pending[0].folder_id != folder_id or pending[1].mode != mode \
+                    or pending[1].target != target:
                 raise UserError(_("Please preview the installation again."))
             self._require_closed(confirmed_closed, _(
                 "Tibia is running. Close the game yourself, then try again. The client keeps the loot list in "
@@ -1331,10 +1541,13 @@ class AppService:
                              "last_success": entry.get("last_success") or fallback,
                              "error": entry.get("last_error"),
                              "bundled": sid != tibia_client.SOURCE_ID and fallback is not None})
-            rows.append({"name": _("Market values"), "where": _("Per world"),
-                         "gives": _("Not configured. No reliable per-world source found yet."),
-                         "type": KIND_TEXT["third_party_estimate"], "official": False, "fresh": None,
-                         "last_success": None, "error": None, "off": True})
+            market, info, entry = self._market_info(), SOURCES[tibiamarket.SOURCE_ID], log.get(tibiamarket.SOURCE_ID, {})
+            rows.append({"name": info.label, "official": False, "type": KIND_TEXT[info.kind], "gives": info.provides,
+                         "where": _("{world} · {n} items").format(world=market["world"], n=f"{market['items']:,}")
+                         if market else _("Not fetched yet. Choose your world on the Skipped Loot screen."),
+                         "fresh": market["fetched_at"] if market else None,
+                         "last_success": entry.get("last_success"), "error": entry.get("last_error"),
+                         "off": not market})
             successes = [r["last_success"] for r in rows if r.get("last_success")]
             return {"rows": rows, "last_update": max(successes) if successes else None,
                     "limit": lib.state.loot_list_limit, "app_data": str(self.store.root)}

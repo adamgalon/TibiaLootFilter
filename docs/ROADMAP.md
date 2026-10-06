@@ -33,8 +33,9 @@ Rules that apply to all of them:
 
 - Compares NPC prices (official client data) with market data for a world the user picks. Shows each value's source
   and freshness. Optional sorting by value per ounce, using item weight from the wiki.
-- Data: implement `values.MarketValueProvider` for a chosen source, with `authority=THIRD_PARTY_ESTIMATE` and
-  `world` set.
+- Partly built: market prices per world now come from TibiaMarket (`sources/tibiamarket.py`) and appear in item
+  details and the recommended Skipped Loot list. Still to do: a side-by-side comparison view, and sorting by value
+  per ounce (needs item weight from the wiki).
 - Still never adds items to lists automatically.
 - Market values could also tier items that no NPC buys for strictness levels (today they're tiered by Market
   category). They'd be shown as estimates, and any change would go through the level's review step.

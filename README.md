@@ -77,7 +77,8 @@ This approach was chosen over a web source such as TibiaWiki's GIFs because:
 | Weekly Tasks | Track this week's Delivery Tasks: required, collected and remaining amounts, with quick +1/+5/+10 buttons. Warns when a task item isn't on your Accepted Loot list. The week resets at Monday's server save (10:00 German time) and earlier weeks are kept as a summary. |
 | Hunt reports | Paste a session from Tibia's Hunt Analyzer ("Copy to clipboard"). Shows the session totals, each looted item matched to its client ID with the best NPC buy price, items it couldn't match, and whether each item is on your Accepted Loot list (one click to add it). When several items share a looted name (there are several "bag" objects, for example), the likeliest is shown, but it isn't counted in the NPC value or tasks until you pick the right one; the pick is remembered for later reports. Looted amounts can be added to this week's tasks once per session. The last 30 sessions are kept in `hunts.json`. Only the pasted text is read. |
 | Copy & export | A one-item-per-line checklist for adding items through the Cyclopedia, and a game-format file export. |
-| Install to character | Choose the character data folder, label the numbered folders, preview Merge or Replace, install with a backup, and restore backups. |
+| My Skipped Loot | Tibia's other Quick Loot list: in Skipped Loot mode the character loots everything **except** these items. Download market prices for your world, then use the **recommended junk** list with a price slider (10 gp to 5,000 gp, with the item count at each step); see [Skipped Loot](#skipped-loot). Skip or un-skip single items from the catalog. Per profile, with history. |
+| Install to character | Choose the character data folder, label the numbered folders, choose which list to install (Accepted Loot or Skipped Loot), preview Merge or Replace, install with a backup, and restore backups. |
 | Data sources | Run *Check for updates*, see each source's type (official client data, community wiki, third-party estimate) and freshness, and set an optional list-size limit. |
 | Help & Support | FAQ, release notes, contact link, and report forms for bugs, wrong item data and feature ideas. |
 
@@ -123,8 +124,9 @@ filtered by ID state.
   source fails, its cached copy is kept and the error is shown. On first run the app uses the Delivery Task snapshot
   and item index bundled in `tibia_loot_manager/data/` (refresh them with `python tools/build_seed.py`).
 - **Values** are stored as provenance-tagged records: what NPCs pay you, what NPCs charge you, the source, the
-  retrieval date, and a world for market data. No market source is configured yet (see [SOURCES.md](SOURCES.md)), and
-  nothing is selected or ranked by value. `values.MarketValueProvider` is the extension point for adding one later.
+  retrieval date, and a world for market data. Market prices come from TibiaMarket for the world you choose (a
+  third-party estimate, downloaded only when you ask; see [SOURCES.md](SOURCES.md)). Value-based lists (strictness
+  levels, recommended junk) are only applied after you preview them.
 
 ## The loot file
 
@@ -214,6 +216,29 @@ Market are junk, and coins are always S. The item details panel in the catalog s
   for example `{"unpriced_category_tiers": {"Soul Cores": "A"}, "items": {"3043": "S"}}`. Each entry overrides
   the same entry in the bundled [`tier_rules.json`](tibia_loot_manager/data/tier_rules.json).
 - Levels are saved per profile and go with profile export and import.
+
+## Skipped Loot
+
+Tibia's Quick Loot has two lists, and a character uses one at a time: **Accepted Loot** (loot only these) or
+**Skipped Loot** (loot everything except these). The game file keeps both. Installing one list switches the
+character to its mode and leaves the other list untouched.
+
+The **recommended junk** list is built from two price sources, and an item is junk only when both say it's cheap:
+
+- the highest price an NPC pays for it (your installed client), and
+- what buyers paid for it this month on your world's Market (TibiaMarket, a third-party estimate).
+
+| Limit (Antica, October 2026) | Items skipped |
+|---|---|
+| 20 gp | about 230 |
+| 50 gp | about 280 |
+| 100 gp | about 350 |
+| 500 gp | about 600 |
+
+Items with too few recent trades are never called junk, because rare and valuable items (boss trophies, uncommon
+equipment) often have none. Delivery Task items and coins are never skipped, and only items some creature drops
+are considered. When new market prices change the list, the Skipped Loot screen shows the changes for review first.
+Items you skip or keep looting yourself always stay as you set them.
 
 ## Roadmap
 

@@ -75,7 +75,8 @@ const S = {
   del: { tab: 'active', data: null },
   acc: { tab: 'active', data: null },
   exp: { sort: 'name', ids: false, data: null, copied: false },
-  ins: { data: null, selected: null, mode: 'merge', editing: null },
+  ins: { data: null, selected: null, mode: 'merge', target: 'whitelist', editing: null },
+  skip: { tab: 'active', data: null, draft: null },
   src: { data: null },
   help: { data: null, open: 2 },
   week: { data: null, q: '', results: [], pick: null, required: '' },
@@ -85,7 +86,7 @@ const S = {
 
 const SCREENS = [
   ['catalog', 'Item catalog', 'books'], ['delivery', 'Delivery Task list', 'package'],
-  ['accepted', 'My Accepted Loot', 'check-square'], ['weekly', 'Weekly Tasks', 'calendar-check'], ['hunts', 'Hunt reports', 'sword'],
+  ['accepted', 'My Accepted Loot', 'check-square'], ['skipped', 'My Skipped Loot', 'prohibit'], ['weekly', 'Weekly Tasks', 'calendar-check'], ['hunts', 'Hunt reports', 'sword'],
   ['export', 'Copy & export', 'export'],
   ['install', 'Install to character', 'download-simple'], ['sources', 'Data sources', 'database'],
   ['help', 'Help & Support', 'lifebuoy'],
@@ -139,6 +140,7 @@ const LOADERS = {
   help: async () => { S.help.data = await get('help'); },
   weekly: async () => { S.week.data = await get('weekly'); },
   hunts: async () => { S.hunt.list = (await get('hunts')).hunts; },
+  skipped: async () => { S.skip.data = await get('skipped', { tab: S.skip.tab }); S.skip.draft = null; },
 };
 
 async function go(screen) {
@@ -191,8 +193,8 @@ function viewToast() {
 
 function viewApp() {
   const a = S.app;
-  const counts = { catalog: num(a.counts.catalog), delivery: num(a.counts.delivery), accepted: num(a.counts.accepted) };
-  const views = { catalog: viewCatalog, delivery: viewDelivery, accepted: viewAccepted, weekly: viewWeekly, hunts: viewHunts, export: viewExport,
+  const counts = { catalog: num(a.counts.catalog), delivery: num(a.counts.delivery), accepted: num(a.counts.accepted), skipped: num(a.skipped_count) };
+  const views = { catalog: viewCatalog, delivery: viewDelivery, accepted: viewAccepted, skipped: viewSkipped, weekly: viewWeekly, hunts: viewHunts, export: viewExport,
     install: viewInstall, sources: viewSources, help: viewHelp };
   return html`
   <div style="flex:1;display:flex;min-height:0">
@@ -419,6 +421,7 @@ function viewDetail() {
         ? html`<button class="btn btn-secondary" data-act="detail-acc" style="justify-content:flex-start">${icon('minus-circle')}Remove from my Accepted Loot</button>`
         : html`<button class="btn btn-primary" data-act="detail-acc" style="justify-content:flex-start">${icon('plus-circle')}Add to my Accepted Loot</button>`}
       <button class="btn btn-ghost" data-act="detail-del" style="justify-content:flex-start;padding-inline:10px">${icon('package')}${d.in_delivery ? 'Exclude from Delivery Task list' : 'Add to Delivery Task list'}</button>
+      ${d.id !== null ? html`<button class="btn btn-ghost" data-act="detail-skip" style="justify-content:flex-start;padding-inline:10px">${icon(d.in_skipped ? 'arrow-counter-clockwise' : 'prohibit')}${d.in_skipped ? 'Stop skipping this item' : 'Skip this item (Skipped Loot)'}</button>` : ''}
     </div>
     <div class="kv">
       <span class="k">Tibia item ID</span>
@@ -438,8 +441,13 @@ function viewDetail() {
       <div style="display:grid;gap:10px;font-size:13px">
         <div style="display:grid;gap:4px"><span>NPCs pay you</span>${valueRows(d.pays, 'No NPC buys it')}</div>
         <div style="display:grid;gap:4px"><span>NPCs charge</span>${valueRows(d.charges, 'Not sold by NPCs')}</div>
-        <div style="display:flex;justify-content:space-between;gap:10px;padding-top:4px"><span>Market</span><span style="color:var(--muted)">No source configured</span></div>
-        <div style="font-size:11.5px;color:var(--muted)">Market prices vary by world. None are shown until you pick a source.</div>
+        ${!d.market ? html`<div style="display:flex;justify-content:space-between;gap:10px;padding-top:4px"><span>Market</span><span style="color:var(--muted)">Not downloaded</span></div>
+            <div style="font-size:11.5px;color:var(--muted)">Market prices vary by world. Download them for your world on the <a href="#" data-act="go" data-screen="skipped">Skipped Loot</a> screen.</div>`
+          : d.market.none ? html`<div style="display:flex;justify-content:space-between;gap:10px;padding-top:4px"><span>Market (${d.market.world})</span><span style="color:var(--muted)">No data</span></div>`
+          : html`<div style="display:grid;gap:4px;padding-top:4px"><span>Market (${d.market.world})</span>
+            <div style="display:flex;justify-content:space-between;gap:10px"><span class="mono">${d.market.value !== null ? gp(d.market.value) : '—'}</span><span style="font-size:11.5px;color:var(--muted)">${d.market.value !== null ? 'what buyers pay' : 'too few trades to tell'}</span></div>
+            <div style="font-size:11.5px;color:var(--muted)">Offers now: buy ${gp(d.market.buy)} · sell ${gp(d.market.sell)} · ${plural(d.market.trades, 'trade', 'trades')} this month</div>
+            <div style="font-size:11.5px;color:var(--muted)">TibiaMarket · ${d.market.kind} · ${fmtDate(d.market.data_time, false)}</div></div>`}
       </div>
     </div>
     <div>
@@ -588,6 +596,88 @@ function viewLevels(d) {
       <div style="flex:1"><div style="font-weight:500;margin-bottom:3px">New prices change the ${d.level.name} level</div>
         <div class="muted">${d.level.pending.add.length || d.level.pending.remove.length ? `${num(d.level.pending.add.length)} to add, ${num(d.level.pending.remove.length)} to remove. Nothing changes until you accept.` : 'Your list stays the same: the items involved are already on it, or kept off it by you.'}</div></div>
       <button class="btn btn-primary" data-act="level-review" style="flex:none;align-self:center">Review…</button></div>` : ''}
+  </div>`;
+}
+
+// ---------- skipped loot ------------------------------------------------------------
+
+// The draft is what the panel shows before "Preview changes…": {on, limit}. null = what's saved.
+const skipDraft = d => S.skip.draft || { on: d.recommend.on, limit: d.recommend.limit };
+const stopIndex = (stops, limit) => Math.max(0, stops.findIndex(s => s.gp >= limit));
+
+function viewSkipped() {
+  const d = S.skip.data;
+  if (!d) return '';
+  const c = d.counts, m = d.market, r = d.recommend, draft = skipDraft(d);
+  const changed = draft.on !== r.on || (draft.on && draft.limit !== r.limit);
+  const idx = r.stops.length ? stopIndex(r.stops, draft.limit) : 0;
+  const stop = r.stops[idx];
+  return html`
+  <div class="page" style="max-width:1080px">
+    <h1>My Skipped Loot</h1>
+    <div class="page-sub">Items you don’t want to pick up. In Skipped Loot mode, Tibia loots everything <b>except</b> these. For profile “${(S.app.profile || {}).name || ''}”: each profile has its own Skipped list.</div>
+
+    <div class="level-panel">
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+        <h6 style="margin:0;flex:1">Market prices</h6>
+        ${m ? html`<button class="btn btn-ghost" data-act="market-refresh" ${raw(S.busy ? 'disabled' : '')} style="font-size:13px;padding-inline:8px">${icon('arrows-clockwise')}Refresh</button>` : ''}
+        <button class="btn ${m ? 'btn-ghost' : 'btn-primary'}" data-act="worlds-open" style="font-size:13px;${m ? 'padding-inline:8px' : ''}">${icon('globe-hemisphere-west')}${m ? 'Change world…' : 'Choose your world…'}</button>
+      </div>
+      ${m ? html`<div style="font-size:13px"><b>${m.world}</b> · ${num(m.items)} items · market data from ${fmtDate(m.data_time)} · downloaded ${fmtDate(m.fetched_at)}
+          <div style="font-size:12px;color:var(--muted);margin-top:2px">From <a href="#" data-act="open-url" data-url="${m.url}">TibiaMarket</a>, a fansite that records the in-game Market. ${m.kind}: prices vary by world and can be out of date. Only downloaded when you click.</div></div>`
+        : html`<div style="font-size:13px;color:var(--muted)">The junk list needs real prices from your world. Choose it to download them (one request, about 3 MB). Nothing is downloaded until you do.</div>`}
+    </div>
+
+    <div class="level-panel">
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+        <h6 style="margin:0;flex:1">Recommended junk</h6>
+        <label style="display:flex;align-items:center;gap:10px;font-size:13.5px;cursor:pointer" data-act="skip-draft-on" role="switch" aria-checked="${draft.on}" tabindex="0">
+          <span class="switch ${draft.on ? 'on' : ''}"><span></span></span>Use the recommended junk list</label>
+      </div>
+      ${!r.stops.length ? html`<div style="font-size:13px;color:var(--muted)">Download market prices first.</div>` : html`
+        <div class="junk-slider ${draft.on ? '' : 'off'}">
+          <input type="range" min="0" max="${r.stops.length - 1}" step="1" value="${idx}" data-input="skip-limit" aria-label="Junk price limit" ${raw(draft.on ? '' : 'disabled')}>
+          <div class="junk-ticks">${r.stops.map((s, i) => html`<span class="${i === idx ? 'on' : ''}">${s.gp >= 1000 ? s.gp / 1000 + 'k' : s.gp}</span>`)}</div>
+        </div>
+        <div id="skip-limit-text" style="font-size:13.5px">${draft.on ? html`Skip items worth under <b class="mono">${num(stop.gp)} gp</b>: <b class="mono">${num(stop.count)}</b> items` : html`<span class="muted">Not used. Only items you skip yourself are on the list.</span>`}</div>
+        <div style="font-size:12px;color:var(--muted)">An item counts as junk only when <b>both</b> the highest NPC price and what buyers on ${m.world}’s Market paid this month are under the limit. Items with too few trades to tell (often rare and valuable), Delivery Task items and coins are never called junk. Only items creatures drop are included.</div>
+        <div style="display:flex;gap:8px"><button class="btn btn-primary" data-act="skip-preview" ${raw(changed ? '' : 'disabled')}>${icon('eye')}Preview changes…</button>
+          ${changed ? html`<button class="btn btn-ghost" data-act="skip-draft-reset">Undo</button>` : ''}</div>`}
+      ${r.pending ? html`<div class="note warn-bg">${icon('arrows-clockwise', 'class="warn"')}
+        <div style="flex:1"><div style="font-weight:500;margin-bottom:3px">New market prices change the recommended junk</div>
+          <div class="muted">${r.pending.add.length || r.pending.remove.length ? `${num(r.pending.add.length)} to skip, ${num(r.pending.remove.length)} to loot again. Nothing changes until you accept.` : 'Your list stays the same.'}</div></div>
+        <button class="btn btn-primary" data-act="skip-review" style="flex:none;align-self:center">Review…</button></div>` : ''}
+    </div>
+
+    ${d.conflicts.length ? html`<div class="note" style="margin-top:12px">${icon('info', 'class="accent"')}<div><div style="font-weight:500;margin-bottom:3px">${plural(d.conflicts.length, 'item is', 'items are')} on both your Skipped and Accepted lists</div>
+      <div class="muted">${d.conflicts.slice(0, 12).join(', ')}${d.conflicts.length > 12 ? '…' : ''}. A character uses one list at a time: in Skipped Loot mode the Accepted list is ignored, and the other way round.</div></div></div>` : ''}
+
+    <div style="display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin:22px 0 6px">
+      <span style="font-size:44px;font-weight:500;letter-spacing:-.02em;line-height:1">${num(c.total)}</span><span style="font-size:15px;color:var(--muted)">items skipped</span>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:13.5px;color:var(--muted);margin-bottom:16px">
+      <span class="mono" style="color:var(--color-text)">${num(c.recommended)}</span><span>recommended junk</span>
+      <span>+</span><span class="mono" style="color:var(--color-text)">${num(c.added)}</span><span>skipped by me</span>
+      <span>−</span><span class="mono" style="color:var(--color-text)">${num(c.removed)}</span><span>kept looting</span>
+      <span style="margin-left:auto">Add single items from the item catalog (“Skip this item”).</span>
+    </div>
+    <div class="seg" role="radiogroup" aria-label="Show" style="margin-bottom:12px;width:fit-content">
+      ${[['active', 'On my list', c.total], ['added', 'Skipped by me', c.added], ['removed', 'Kept looting', c.removed]].map(([k, l, n]) => html`
+        <label class="seg-opt nowrap"><input type="radio" name="skiptab" data-act="skip-tab" data-v="${k}" ${raw(S.skip.tab === k ? 'checked' : '')}>${l}<span class="mono" style="font-size:11.5px;color:var(--muted)">${num(n)}</span></label>`)}
+    </div>
+    <table class="table">
+      <thead><tr><th style="width:44px"></th><th>Item</th><th style="width:90px">Item ID</th><th style="width:110px;text-align:right">NPC pays</th><th style="width:120px;text-align:right">Market (${m ? m.world : '—'})</th><th style="width:150px">Comes from</th><th style="width:110px"></th></tr></thead>
+      <tbody>${d.rows.map(row => html`<tr>
+        <td>${spriteSlot(row.id, 28)}</td>
+        <td><a href="#" data-act="show-item" data-key="${row.key}" style="color:inherit;text-decoration:none">${row.name}</a>${row.also_accepted ? html` <span class="tag tag-neutral tag-sm" style="margin-left:6px" title="Also on your Accepted list">also Accepted</span>` : ''}</td>
+        <td class="mono" style="font-size:12.5px">${row.id}</td>
+        <td class="mono" style="text-align:right;font-size:12.5px">${row.npc ? gp(row.npc) : '—'}</td>
+        <td class="mono" style="text-align:right;font-size:12.5px">${row.market !== null ? gp(row.market) : html`<span class="muted" title="Too few trades this month">—</span>`}</td>
+        <td style="font-size:13px;color:var(--muted)">${row.from}</td>
+        <td style="text-align:right"><button class="btn btn-ghost" data-act="skip-toggle" data-key="${row.key}" style="font-size:13px;padding-inline:8px">${row.on ? 'Loot it' : 'Skip again'}</button></td>
+      </tr>`)}</tbody>
+    </table>
+    ${!d.rows.length ? html`<div style="padding:24px 8px;color:var(--muted)">Nothing here.</div>` : ''}
   </div>`;
 }
 
@@ -783,6 +873,7 @@ function viewExport() {
 // ---------- install -----------------------------------------------------------------
 
 function viewInstall() {
+  const listWord = S.ins.target === 'blacklist' ? 'Skipped' : 'Accepted';
   const d = S.ins.data;
   if (!d) return '';
   const sel = d.characters.find(c => c.id === d.selected);
@@ -834,11 +925,16 @@ function viewInstall() {
         </div>` : ''}
       </div>
       <div class="panel">
-        <h5 style="margin:0">Install your Accepted Loot list</h5>
-        <div style="font-size:13px;color:var(--muted)">To <span style="color:var(--color-text)">${selName || '—'}</span> · ${num(d.export_count)} exportable items${d.blocked ? ` · ${d.blocked} left out` : ''}</div>
-        ${choice('merge', 'Merge', 'Keep the items already on the character’s Accepted list and add yours.')}
-        ${choice('replace', 'Replace', 'The character’s Accepted list becomes exactly your list.')}
-        <div style="font-size:12.5px;color:var(--muted)">Both switch the character to Accepted Loot mode and leave the Skipped list as it is.</div>
+        <h5 style="margin:0">Install a loot list</h5>
+        <div class="seg" role="radiogroup" aria-label="Which list" style="width:100%">
+          ${[['whitelist', 'Accepted Loot', d.export_count], ['blacklist', 'Skipped Loot', d.skipped_export_count]].map(([k, l, n]) => html`
+            <label class="seg-opt nowrap" style="flex:1;justify-content:center"><input type="radio" name="instarget" data-act="ins-target" data-v="${k}" ${raw(S.ins.target === k ? 'checked' : '')}>${l}<span class="mono" style="font-size:11.5px;color:var(--muted)">${num(n)}</span></label>`)}
+        </div>
+        <div style="font-size:12.5px;color:var(--muted)">${S.ins.target === 'blacklist' ? 'Skipped Loot mode: the character loots everything except these items.' : 'Accepted Loot mode: the character loots only these items.'}</div>
+        <div style="font-size:13px;color:var(--muted)">To <span style="color:var(--color-text)">${selName || '—'}</span> · ${num(S.ins.target === 'blacklist' ? d.skipped_export_count : d.export_count)} exportable items${S.ins.target !== 'blacklist' && d.blocked ? ` · ${d.blocked} left out` : ''}</div>
+        ${choice('merge', 'Merge', `Keep the items already on the character’s ${listWord} list and add yours.`)}
+        ${choice('replace', 'Replace', `The character’s ${listWord} list becomes exactly your list.`)}
+        <div style="font-size:12.5px;color:var(--muted)">Both switch the character to ${listWord} Loot mode and leave the ${S.ins.target === 'blacklist' ? 'Accepted' : 'Skipped'} list as it is.</div>
         <button class="btn btn-primary" data-act="install-preview" ${raw(canInstall ? '' : 'disabled')} style="padding:9px 14px">${icon('eye')}Preview changes…</button>
         ${!d.format_ok ? html`<div style="font-size:12.5px" class="warn">Installing is disabled until the loot file format is confirmed.</div>` : sel && sel.error ? html`<div style="font-size:12.5px" class="bad">This character’s loot file can’t be read.</div>` : ''}
       </div>
@@ -945,7 +1041,8 @@ function viewModal() {
   if (!m) return '';
   const views = { profiles: viewProfilesModal, 'profile-new': viewProfileNewModal, history: viewHistoryModal,
     update: viewUpdateModal, install: viewInstallModal, restore: viewRestoreModal, report: viewReportModal,
-    confirm: viewConfirmModal, error: viewErrorModal, 'search-save': viewSearchSaveModal, level: viewLevelModal };
+    confirm: viewConfirmModal, error: viewErrorModal, 'search-save': viewSearchSaveModal, level: viewLevelModal,
+    worlds: viewWorldsModal, 'skip-preview': viewSkipPreviewModal };
   return html`<div class="backdrop" data-backdrop role="dialog" aria-modal="true">${views[m.kind](m)}</div>`;
 }
 
@@ -1059,6 +1156,41 @@ function viewLevelModal(m) {
       <button class="btn btn-primary" data-act="${m.review ? 'level-accept' : 'level-apply'}" ${raw(p ? '' : 'disabled')} data-autofocus>${m.review ? 'Accept changes' : p && p.level ? `Use ${p.name}` : 'Stop using a level'}</button></div></div>`;
 }
 
+function viewWorldsModal(m) {
+  const q = (m.q || '').trim().toLowerCase();
+  const list = (m.worlds || []).filter(w => !q || w.name.toLowerCase().includes(q));
+  const age = t => { const days = Math.floor((Date.now() - new Date(t + (t && !t.endsWith('Z') ? 'Z' : ''))) / 86400000); return isNaN(days) ? '' : days <= 0 ? 'today' : plural(days, 'day', 'days') + ' old'; };
+  return html`<div class="dialog" style="width:min(560px,100%)">
+    <div style="display:flex;align-items:flex-start;gap:12px">
+      <div style="flex:1"><div class="dialog-title">Choose your world</div><div style="font-size:13px;color:var(--muted);margin-top:2px">Market prices from TibiaMarket. Some worlds are updated more often than others.</div></div>
+      <button class="btn btn-icon btn-ghost" data-act="modal-close" title="Close" aria-label="Close" style="color:var(--color-text)">${icon('x', 'style="font-size:16px"')}</button>
+    </div>
+    ${m.fetching ? html`<div style="display:flex;gap:10px;align-items:center;font-size:13.5px"><i class="ph ph-circle-notch spin accent" style="font-size:18px"></i>Downloading market prices for ${m.fetching}…</div>`
+      : !m.worlds ? html`<div style="display:flex;gap:10px;align-items:center;font-size:13.5px"><i class="ph ph-circle-notch spin accent" style="font-size:18px"></i>Loading the world list…</div>`
+      : html`<input class="input" data-input="world-q" value="${m.q || ''}" placeholder="Search worlds" aria-label="Search worlds" data-autofocus>
+        <div class="world-list">${list.map(w => html`<button class="world ${w.name === m.current ? 'on' : ''}" data-act="world-pick" data-v="${w.name}">
+          <span>${w.name}</span><span class="muted" style="font-size:12px">${age(w.last_update)}</span></button>`)}
+          ${!list.length ? html`<div class="muted" style="padding:10px">No world matches “${m.q}”.</div>` : ''}</div>`}
+  </div>`;
+}
+
+function viewSkipPreviewModal(m) {
+  const p = m.preview;
+  const title = m.review ? 'Update the recommended junk?' : !p ? 'Skipped Loot' : p.on ? `Skip items worth under ${num(p.limit)} gp?` : 'Stop using the recommended junk list?';
+  return html`<div class="dialog" style="width:min(640px,100%)">
+    <div class="dialog-title">${title}</div>
+    ${!p ? html`<div class="muted">Working out the changes…</div>` : html`
+      <div style="font-size:13.5px">${m.review ? 'New market prices change which items count as junk:' : html`Your Skipped list would have <b class="mono">${num(p.total_after)}</b> items. Items you skipped or kept looting yourself stay as they are.`}</div>
+      <div style="display:grid;gap:10px;font-size:13px;max-height:300px;overflow:auto">
+        <div><div class="bad" style="font-weight:500;margin-bottom:3px">${icon('prohibit')} Skipped from now on (${num(p.add.length)})</div>${nameList(p.add)}</div>
+        <div><div class="ok" style="font-weight:500;margin-bottom:3px">${icon('check-circle')} Looted again (${num(p.remove.length)})</div>${nameList(p.remove)}</div>
+      </div>
+      ${p.conflicts_after && p.conflicts_after.length ? html`<div style="font-size:12.5px;color:var(--muted)">${icon('info')} ${plural(p.conflicts_after.length, 'of them is', 'of them are')} also on your Accepted list: ${p.conflicts_after.slice(0, 8).join(', ')}${p.conflicts_after.length > 8 ? '…' : ''}.</div>` : ''}
+      <div style="font-size:12.5px;color:var(--muted)">You can undo this from the profile’s history. Nothing reaches the game until you install the Skipped list on the Install screen.</div>`}
+    <div class="dialog-actions"><button class="btn btn-secondary" data-act="modal-close">Cancel</button>
+      <button class="btn btn-primary" data-act="${m.review ? 'skip-accept' : 'skip-apply'}" ${raw(p ? '' : 'disabled')} data-autofocus>${m.review ? 'Accept changes' : 'Apply'}</button></div></div>`;
+}
+
 function viewSearchSaveModal(m) {
   return html`<div class="dialog" style="width:min(460px,100%)">
     <div class="dialog-title">Save this search</div>
@@ -1123,12 +1255,12 @@ function viewUpdateModal(m) {
 function viewInstallModal(m) {
   const p = m.preview, toneColor = { ok: 'var(--ok)', warn: 'var(--warn)', bad: 'var(--bad)', muted: 'var(--muted)', accent: 'var(--color-accent)' };
   return html`<div class="dialog" style="width:min(620px,100%)">
-    <div><div class="dialog-title">Preview: ${p.mode === 'merge' ? 'Merge' : 'Replace'}</div>
+    <div><div class="dialog-title">Preview: ${p.list_name} · ${p.mode === 'merge' ? 'Merge' : 'Replace'}</div>
       <div style="font-size:13px;color:var(--muted);margin-top:2px">${p.label || 'Unlabelled'} · folder <span class="mono">${p.folder}</span> · ${num(p.total)} items after install</div></div>
     <div>${p.rows.map(r => html`<div class="dlg-row rule">${icon(r.icon, `style="color:${toneColor[r.tone]};font-size:16px"`)}<span style="font-size:14px">${r.label}</span><span class="mono" style="font-size:12.5px;color:var(--muted)">${r.value}</span></div>`)}</div>
     ${p.removed.length ? html`<div class="note bad-bg" style="display:block;padding:10px 12px;font-size:12.5px"><div style="font-weight:500;margin-bottom:4px">${plural(p.removed.length, 'item', 'items')} will be removed from the Accepted list</div><div style="color:var(--muted)">${p.removed.slice(0, 30).join(', ')}${p.removed.length > 30 ? '…' : ''}</div></div>` : ''}
     ${p.blocked.length ? html`<div style="font-size:12.5px;color:var(--muted)">${icon('warning', 'class="warn"')} Not installed (ID unverified or conflicting): ${p.blocked.slice(0, 8).join(', ')}${p.blocked.length > 8 ? '…' : ''}</div>` : ''}
-    ${p.also_skipped.length ? html`<div style="font-size:12.5px;color:var(--muted)">${num(p.also_skipped.length)} item(s) are also on the Skipped list (${p.also_skipped.slice(0, 5).join(', ')}). In Accepted Loot mode the Skipped list is not used.</div>` : ''}
+    ${p.also_other.length ? html`<div style="font-size:12.5px;color:var(--muted)">${plural(p.also_other.length, 'item is', 'items are')} also on the character’s ${p.other_name} list (${p.also_other.slice(0, 5).join(', ')}). In ${p.list_name} mode the ${p.other_name} list is not used.</div>` : ''}
     <div style="display:grid;gap:8px;font-size:12.5px">
       <div style="display:flex;gap:8px;align-items:center">${p.tibia_running ? html`${icon('warning-circle', 'class="bad" style="font-size:16px"')}<span><b>Tibia is running.</b> Close the game yourself, then check again. The app never closes it for you.</span>` : p.tibia_unknown ? html`${icon('warning', 'class="warn" style="font-size:16px"')}<span>Couldn’t check whether Tibia is running. Installing while it runs can lose the change: the game rewrites the file when it exits.</span>` : html`${icon('check-circle', 'class="ok" style="font-size:16px"')}Tibia is not running`}</div>
       ${p.tibia_unknown ? closedCheck(m) : ''}
@@ -1259,7 +1391,7 @@ async function switchProfile(id) {
 async function previewInstall() {
   S.busy = true;
   await guard(async () => {
-    const preview = await post('install/preview', { folder: S.ins.selected, mode: S.ins.mode });
+    const preview = await post('install/preview', { folder: S.ins.selected, mode: S.ins.mode, target: S.ins.target });
     S.modal = { kind: 'install', preview };
   }, 'Preview installation');
   S.busy = false;
@@ -1273,7 +1405,7 @@ const ACTIONS = {
   'open-url': el => guard(() => post('open-url', { url: el.dataset.url })),
   'open-folder': el => guard(() => post('open-folder', { which: el.dataset.which, folder: el.dataset.folder })),
   'contact': () => guard(async () => { const h = S.help.data; if (h.support.contact) await post('open-url', { url: h.support.contact }); }),
-  'show-item': async el => { S.cat.sel = el.dataset.key; S.screen = 'catalog'; location.hash = 'catalog'; await guard(async () => { await loadCatalog(false); await loadItem(el.dataset.key); }); render(true); },
+  'show-item': async el => { S.cat.sel = el.dataset.key.replace(/^client:/, ''); S.screen = 'catalog'; location.hash = 'catalog'; await guard(async () => { await loadCatalog(false); await loadItem(S.cat.sel); }); render(true); },
 
   // onboarding
   'onb-next': async () => {
@@ -1355,6 +1487,50 @@ const ACTIONS = {
   // accepted
   'acc-tab': async el => { S.acc.tab = el.dataset.v; await guard(LOADERS.accepted); render(); },
   'acc-toggle': async el => { await guard(async () => { await post('accepted/toggle', { key: el.dataset.key }); await loadState(); await LOADERS.accepted(); }); render(); },
+  // skipped loot
+  'skip-tab': async el => { S.skip.tab = el.dataset.v; await guard(LOADERS.skipped); render(); },
+  'skip-toggle': async el => { await guard(async () => { await post('skipped/toggle', { key: el.dataset.key }); await loadState(); const draft = S.skip.draft; await LOADERS.skipped(); S.skip.draft = draft; }); render(); },
+  'skip-draft-on': () => { const d = S.skip.data, draft = skipDraft(d); S.skip.draft = { ...draft, on: !draft.on }; render(); },
+  'skip-draft-reset': () => { S.skip.draft = null; render(); },
+  'skip-preview': async () => {
+    const draft = skipDraft(S.skip.data);
+    S.modal = { kind: 'skip-preview', preview: null }; render();
+    await guard(async () => { S.modal.preview = await get('skipped/preview', { on: draft.on ? 1 : '', limit: draft.limit }); }, 'Preview Skipped Loot');
+    render();
+  },
+  'skip-apply': async () => {
+    const p = S.modal.preview;
+    await guard(async () => {
+      const r = await post('skipped/apply', { on: p.on, limit: p.limit });
+      S.modal = null; await loadState(); await LOADERS.skipped();
+      toast(`Skipped Loot: ${plural(r.count, 'item', 'items')}.`);
+    }, 'Apply Skipped Loot');
+    render();
+  },
+  'skip-review': () => { const pend = S.skip.data.recommend.pending; S.modal = { kind: 'skip-preview', review: true, preview: { ...pend, on: true } }; render(); },
+  'skip-accept': async () => { await guard(async () => { await post('skipped/accept-changes'); S.modal = null; await loadState(); await LOADERS.skipped(); toast('Recommended junk updated.'); }, 'Update recommended junk'); render(); },
+  'worlds-open': async () => {
+    S.modal = { kind: 'worlds', worlds: null, q: '' }; render();
+    const ok = await guard(async () => { const r = await get('market/worlds'); if (S.modal && S.modal.kind === 'worlds') Object.assign(S.modal, r); return true; }, 'Load world list');
+    if (!ok && S.modal && S.modal.kind === 'worlds') S.modal = null;
+    render();
+  },
+  'world-pick': async el => {
+    const world = el.dataset.v;
+    S.modal.fetching = world; render();
+    const ok = await guard(async () => { await post('market/fetch', { world }); return true; }, 'Download market prices');
+    if (ok) { S.modal = null; await loadState(); await LOADERS.skipped(); toast(`Market prices for ${world} downloaded.`); }
+    else if (S.modal) S.modal.fetching = null;
+    render();
+  },
+  'market-refresh': async () => {
+    const world = S.skip.data.market.world;
+    S.busy = true; render();
+    await guard(async () => { await post('market/fetch', { world }); await LOADERS.skipped(); toast(`Market prices for ${world} refreshed.`); }, 'Refresh market prices');
+    S.busy = false; render();
+  },
+  'detail-skip': async () => { await guard(async () => { await post('skipped/toggle', { key: S.cat.sel }); await loadState(); await loadItem(S.cat.sel); }); render(); },
+
   'level-pick': async el => {
     const level = el.dataset.v;
     if (level === S.acc.data.levels.current) return;
@@ -1405,13 +1581,15 @@ const ACTIONS = {
   'ins-select': async (el, e) => { if (e.target.closest('[data-act="ins-edit"],input')) return; S.ins.selected = el.dataset.v; await guard(LOADERS.install); render(); },
   'ins-edit': el => { S.ins.editing = el.dataset.v; render(); },
   'ins-mode': el => { S.ins.mode = el.dataset.v; render(); },
+  'ins-target': el => { S.ins.target = el.dataset.v; render(); },
   'install-preview': () => previewInstall(),
   'install-apply': async () => {
     S.busy = true; render();
     try {
-      const r = await post('install/apply', { folder: S.ins.selected, mode: S.ins.mode, closed: !!S.modal.closed });
+      const listName = S.modal.preview.list_name;
+      const r = await post('install/apply', { folder: S.ins.selected, mode: S.ins.mode, closed: !!S.modal.closed, target: S.ins.target });
       S.modal = null;
-      toast(`Installed and verified ${num(r.count)} Accepted Loot items.` + (r.backup ? ` Backup: ${r.backup}` : ' (No previous file to back up.)'));
+      toast(`Installed and verified ${num(r.count)} ${listName} items.` + (r.backup ? ` Backup: ${r.backup}` : ' (No previous file to back up.)'));
       await LOADERS.install();
     } catch (e) { S.busy = false; showError(e, `Install loot list (${S.ins.mode})`); return; }
     S.busy = false; render();
@@ -1576,9 +1754,23 @@ const CHANGES = {
   'rep-diag': async el => { S.modal.includeDiag = el.checked; await guard(composeReport); render(); },
 };
 
+let skipTimer;
 let searchTimer = null, composeTimer = null;
 let weekTimer = null;
 const INPUTS = {
+  'skip-limit': el => {
+    const d = S.skip.data, stop = d.recommend.stops[+el.value];
+    S.skip.draft = { ...skipDraft(d), limit: stop.gp };
+    clearTimeout(skipTimer);
+    skipTimer = setTimeout(() => render(), 250);  // redraw once the slider rests
+    const t = document.getElementById('skip-limit-text');
+    if (t) t.innerHTML = val(html`Skip items worth under <b class="mono">${num(stop.gp)} gp</b>: <b class="mono">${num(stop.count)}</b> items`);
+  },
+  'world-q': el => {
+    S.modal.q = el.value;
+    clearTimeout(skipTimer);
+    skipTimer = setTimeout(() => { render(); const i = document.querySelector('[data-input="world-q"]'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 150);
+  },
   'hunt-text': el => {
     const had = !!S.hunt.text.trim(); S.hunt.text = el.value;
     const btn = document.querySelector('[data-act="hunt-analyze"]');

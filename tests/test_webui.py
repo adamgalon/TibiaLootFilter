@@ -65,6 +65,13 @@ class ServiceTest(unittest.TestCase):
         self.assertEqual([r["id"] for r in conflicting], [2915])
         self.assertEqual(self.svc.item("2915")["state"], "conflicting")
 
+    def test_item_link_from_a_list_row(self):
+        self.svc.toggle_accepted("2915")  # added by hand: its row key is "client:2915"
+        keys = [r["key"] for r in self.svc.accepted()["rows"]]
+        self.assertIn("client:2915", keys)
+        for key in keys:
+            self.assertTrue(self.svc.item(key)["name"])  # regression: "client:" keys were "Unknown item"
+
     def test_toggles(self):
         self.assertTrue(self.svc.toggle_accepted("2915")["in_accepted"])
         self.assertFalse(self.svc.toggle_accepted("2915")["in_accepted"])

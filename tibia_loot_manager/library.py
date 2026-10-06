@@ -95,12 +95,14 @@ ORIGIN_DELIVERY_SOURCE = "delivery_source"
 ORIGIN_DELIVERY_USER = "delivery_user"
 ORIGIN_MANUAL = "manual"
 ORIGIN_PRESET = "preset"
+ORIGIN_RECOMMENDED = "recommended"
 
 ORIGIN_TEXT = {
     ORIGIN_DELIVERY_SOURCE: _("Delivery Task (source)"),
     ORIGIN_DELIVERY_USER: _("Delivery Task (added by you)"),
     ORIGIN_MANUAL: _("Added by you"),
     ORIGIN_PRESET: _("Strictness level"),
+    ORIGIN_RECOMMENDED: _("Recommended junk"),
 }
 
 
@@ -366,6 +368,35 @@ class Library:
                 entry.client_id is not None and client_key(entry.client_id) in excluded_keys)
             (excluded if is_excluded else active).append(entry)
         return active, excluded
+
+    def skipped_entries(self) -> tuple[list[Entry], list[Entry]]:
+        """Return (active, excluded) Skipped Loot entries: the recommended junk (if used) plus items skipped by
+        hand, minus recommended items the user keeps looting. Client IDs only."""
+        st = self.state
+        recommended = st.skipped_items if st.skipped_recommended else []
+        excluded = set(st.skipped_excluded)
+        active, removed, seen = [], [], set()
+        for cid, origin in [(c, ORIGIN_RECOMMENDED) for c in recommended] + [(c, ORIGIN_MANUAL) for c in st.skipped_extra]:
+            if cid in seen or cid not in self.items_by_id:
+                continue
+            seen.add(cid)
+            entry = Entry(client_key(cid), self.item_name(cid), cid, self.client_id_status(cid), origin)
+            (removed if origin == ORIGIN_RECOMMENDED and cid in excluded else active).append(entry)
+        return active, removed
+
+    def skipped_ids(self) -> set[int]:
+        return {e.client_id for e in self.skipped_entries()[0] if e.exportable}
+
+    def add_to_skipped(self, client_id: int) -> None:
+        if client_id in self.state.skipped_excluded:
+            self.state.skipped_excluded.remove(client_id)
+        if client_id not in {e.client_id for e in self.skipped_entries()[0]}:
+            self.state.skipped_extra.append(client_id)
+
+    def remove_from_skipped(self, client_id: int) -> None:
+        self.state.skipped_extra = [c for c in self.state.skipped_extra if c != client_id]
+        if client_id in {e.client_id for e in self.skipped_entries()[0]} and client_id not in self.state.skipped_excluded:
+            self.state.skipped_excluded.append(client_id)
 
     def accepted_ids(self) -> set[int]:
         return {e.client_id for e in self.accepted_entries()[0] if e.exportable}

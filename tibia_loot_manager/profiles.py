@@ -16,6 +16,7 @@ from .state import UserState
 from .storage import read_json_checked, utc_now_iso, write_json_atomic
 
 EXPORT_FORMAT = "tibia-loot-profile"
+SKIP_KEYS = ("skip_recommended", "skip_limit", "skip_items", "skip_extra", "skip_excluded")
 EXPORT_VERSION = 1
 HISTORY_LIMIT = 100
 NAME_LIMIT = 40
@@ -28,7 +29,14 @@ class ProfileError(Exception):
 def snapshot(state: UserState) -> dict:
     return {"follow_delivery": state.accepted_follow_delivery, "extra": list(state.accepted_extra),
             "excluded": list(state.accepted_excluded), "preset": state.accepted_preset,
-            "preset_items": list(state.accepted_preset_items)}
+            "preset_items": list(state.accepted_preset_items),
+            "skip_recommended": state.skipped_recommended, "skip_limit": state.skipped_limit,
+            "skip_items": list(state.skipped_items), "skip_extra": list(state.skipped_extra),
+            "skip_excluded": list(state.skipped_excluded)}
+
+
+def _ints(values) -> list[int]:
+    return [int(x) for x in values or [] if isinstance(x, int) and not isinstance(x, bool)]
 
 
 def apply(state: UserState, snap: dict) -> None:
@@ -38,6 +46,12 @@ def apply(state: UserState, snap: dict) -> None:
     state.accepted_preset = snap.get("preset") if isinstance(snap.get("preset"), str) else ""
     state.accepted_preset_items = [int(x) for x in snap.get("preset_items", [])
                                    if isinstance(x, int) and not isinstance(x, bool)]
+    state.skipped_recommended = snap.get("skip_recommended") is True
+    limit = snap.get("skip_limit", 100)
+    state.skipped_limit = limit if isinstance(limit, int) and not isinstance(limit, bool) and limit > 0 else 100
+    state.skipped_items = _ints(snap.get("skip_items"))
+    state.skipped_extra = _ints(snap.get("skip_extra"))
+    state.skipped_excluded = _ints(snap.get("skip_excluded"))
 
 
 def ensure(state: UserState) -> bool:
@@ -84,7 +98,8 @@ def create(state: UserState, name: str, snap: dict) -> str:
     state.profiles[pid] = {"name": clean_name(name, state), "created": utc_now_iso(),
                            "follow_delivery": bool(snap.get("follow_delivery", True)),
                            "extra": list(snap.get("extra", [])), "excluded": list(snap.get("excluded", [])),
-                           "preset": snap.get("preset", ""), "preset_items": list(snap.get("preset_items", []))}
+                           "preset": snap.get("preset", ""), "preset_items": list(snap.get("preset_items", [])),
+                           **{k: snap[k] for k in SKIP_KEYS if k in snap}}
     return pid
 
 
@@ -120,7 +135,7 @@ def export_data(state: UserState, pid: str, app_version: str) -> dict:
     return {"format": EXPORT_FORMAT, "version": EXPORT_VERSION, "app_version": app_version,
             "exported_at": utc_now_iso(), "name": p["name"], "follow_delivery": p["follow_delivery"],
             "extra": p["extra"], "excluded": p["excluded"], "preset": p.get("preset", ""),
-            "preset_items": p.get("preset_items", [])}
+            "preset_items": p.get("preset_items", []), **{k: p[k] for k in SKIP_KEYS if k in p}}
 
 
 def parse_import(data) -> tuple[str, dict]:
@@ -138,9 +153,17 @@ def parse_import(data) -> tuple[str, dict]:
     if not (isinstance(preset, str) and isinstance(preset_items, list)
             and all(isinstance(x, int) and not isinstance(x, bool) and x > 0 for x in preset_items)):
         raise ProfileError(_("The profile's strictness level is damaged."))
+    skip = {k: data[k] for k in SKIP_KEYS if k in data}
+    for k in ("skip_items", "skip_extra", "skip_excluded"):
+        if k in skip and not (isinstance(skip[k], list)
+                              and all(isinstance(x, int) and not isinstance(x, bool) and x > 0 for x in skip[k])):
+            raise ProfileError(_("The profile's Skipped Loot list is damaged."))
+    if not isinstance(skip.get("skip_recommended", False), bool) or not (
+            isinstance(skip.get("skip_limit", 100), int) and skip.get("skip_limit", 100) > 0):
+        raise ProfileError(_("The profile's Skipped Loot settings are damaged."))
     name = data.get("name") if isinstance(data.get("name"), str) else _("Imported profile")
     return name, {"follow_delivery": bool(data.get("follow_delivery", True)), "extra": extra, "excluded": excluded,
-                  "preset": preset, "preset_items": preset_items}
+                  "preset": preset, "preset_items": preset_items, **skip}
 
 
 # --- history -------------------------------------------------------------------------------

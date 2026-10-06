@@ -150,27 +150,40 @@ class InstallPlan:
     added: list[int]
     removed: list[int]
     kept: list[int]
-    also_skipped: list[int]  # IDs on both the new Accepted list and the existing Skipped list
+    also_other: list[int]  # IDs on both the installed list and the character's other list
     creates_file: bool
+    target: str = MODE_ACCEPTED  # which list is installed: MODE_ACCEPTED or MODE_SKIPPED
 
     @property
     def mode_change(self) -> bool:
-        return self.old_mode != MODE_ACCEPTED
+        return self.old_mode != self.target
+
+    @property
+    def list_key(self) -> str:
+        return KEY_ACCEPTED if self.target == MODE_ACCEPTED else KEY_SKIPPED
+
+    @property
+    def other_key(self) -> str:
+        return KEY_SKIPPED if self.target == MODE_ACCEPTED else KEY_ACCEPTED
 
 
-def plan_install(existing: dict | None, accepted_ids: list[int], mode: str) -> InstallPlan:
-    """Compute the file to write. Only ``listType`` and ``whitelistTypes`` change;
-    the Skipped Loot list and any unknown fields are carried over unchanged."""
+def plan_install(existing: dict | None, ids: list[int], mode: str, target: str = MODE_ACCEPTED) -> InstallPlan:
+    """Compute the file to write: the target list (Accepted or Skipped) and ``listType``, which switches the
+    character to that list. The other list and any unknown fields are carried over unchanged."""
     if mode not in (MERGE, REPLACE):
         raise ValueError(mode)
+    if target not in (MODE_ACCEPTED, MODE_SKIPPED):
+        raise ValueError(target)
+    key = KEY_ACCEPTED if target == MODE_ACCEPTED else KEY_SKIPPED
+    other = KEY_SKIPPED if target == MODE_ACCEPTED else KEY_ACCEPTED
     base = dict(existing) if existing else {KEY_SKIPPED: [], KEY_MODE: MODE_SKIPPED, KEY_ACCEPTED: []}
-    old_ids = list(base.get(KEY_ACCEPTED, []))
-    new_set = set(accepted_ids)
+    old_ids = list(base.get(key, []))
+    new_set = set(ids)
     if mode == MERGE:
         result = old_ids + sorted(new_set - set(old_ids))
     else:
         result = sorted(new_set)
-    data = {**base, KEY_MODE: MODE_ACCEPTED, KEY_ACCEPTED: result}
+    data = {**base, KEY_MODE: target, key: result}
     old_set = set(old_ids)
     return InstallPlan(
         mode=mode,
@@ -179,8 +192,9 @@ def plan_install(existing: dict | None, accepted_ids: list[int], mode: str) -> I
         added=sorted(set(result) - old_set),
         removed=sorted(old_set - set(result)),
         kept=sorted(old_set & set(result)),
-        also_skipped=sorted(set(result) & set(base.get(KEY_SKIPPED, []))),
+        also_other=sorted(set(result) & set(base.get(other, []))),
         creates_file=existing is None,
+        target=target,
     )
 
 

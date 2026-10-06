@@ -9,8 +9,11 @@ details, and never uploads your Tibia files.
 
 ## Running it
 
-**Portable version (no Python needed):** unzip `TibiaLootManager-<version>.zip` and double-click
-`Start Tibia Loot List Manager.cmd`. It needs Windows 10 or 11 with Microsoft Edge (built in).
+**Portable version (no Python needed):** unzip `TibiaLootManager-<version>.zip` to a folder that will stay put,
+then double-click `Create desktop shortcut.cmd`. It adds a "Tibia Loot List Manager" icon to the desktop and Start
+menu that starts the app without a console window (run it again if you move the folder). Or just double-click
+`Start Tibia Loot List Manager.cmd`. It needs Windows 10 or 11 with Microsoft Edge (built in). If the zip was
+downloaded, unblock it first (right-click → Properties → Unblock) so Windows doesn't warn about every file.
 
 To build that zip yourself:
 

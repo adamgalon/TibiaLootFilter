@@ -20,7 +20,9 @@ from .. import paths
 from .server import Server
 from .service import AppService, Dialogs
 
-PING_TIMEOUT = 25  # seconds without a ping from the page before the app exits
+# Seconds without a ping before the app exits. Edge runs a hidden window's timers about once a minute,
+# so this must stay well above 60.
+PING_TIMEOUT = 150
 FIRST_PING_GRACE = 90  # the window may take a while to open on first launch
 TITLE = "Tibia Loot List Manager"
 
@@ -108,8 +110,10 @@ def _run() -> None:
             if proc is not None:
                 if not owner_known and now - started > 5:
                     owner_known, owns_window = True, proc.poll() is None
-                if owns_window and proc.poll() is not None:
-                    break
+                if owns_window:
+                    if proc.poll() is not None:
+                        break
+                    continue  # the window's process is the reliable signal; pings stall while it's minimized
             last = pings["last"]
             if (last is None and now - started > FIRST_PING_GRACE) or (last is not None and now - last > PING_TIMEOUT):
                 break

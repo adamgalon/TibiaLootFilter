@@ -8,7 +8,7 @@ source list without overwriting anything the user chose.
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
-from .storage import read_json, write_json_atomic
+from .storage import write_json_atomic
 
 SCHEMA_VERSION = 1
 SEARCH_FIELDS = ("name", "q", "seg", "cat", "idf")
@@ -72,10 +72,6 @@ class UserState:
     market_world: str = ""  # game world whose market prices were fetched
 
     schema_version: int = SCHEMA_VERSION
-
-    @classmethod
-    def load(cls, path: Path) -> "UserState":
-        return cls.from_dict(read_json(path, default={}) or {})
 
     @classmethod
     def from_dict(cls, data: dict) -> "UserState":

@@ -993,7 +993,7 @@ class AppService:
             tracked = {t["key"] for t in self._week()["tasks"]}
             rows = []
             for e in self.library.delivery_entries()[0]:
-                if query and query not in e.name.lower() and query != str(e.client_id):
+                if query and not matches_search(query, e.name, e.client_id):
                     continue
                 d = e.delivery or {}
                 rows.append({"key": e.key, "name": e.name, "id": e.client_id, "min": d.get("min_qty"),
@@ -1113,7 +1113,8 @@ class AppService:
                 "applied_this_week": record.get("applied_week") == self._week()["week_start"]}
 
     def hunt_analyze(self, text: str) -> dict:
-        if not hunts.parse_report(text)["items"] and not hunts.parse_report(text)["monsters"]:
+        parsed = hunts.parse_report(text)
+        if not parsed["items"] and not parsed["monsters"]:
             raise UserError(_("That doesn't look like a Hunt Analyzer report. In Tibia, open the Hunt Analyzer, "
                               "choose “Copy to clipboard”, then paste it here."))
         with self.lock:
@@ -1176,9 +1177,9 @@ class AppService:
             for task in week["tasks"]:
                 if task["name"] in by_name:
                     task["collected"] += by_name[task["name"]]
+            self._save()  # save the counts before marking the session applied, so a failed save can be retried
             record["applied_week"] = week["week_start"]
             write_json_atomic(self._hunts_path(), records, indent=None)
-            self._save()
             return {"updated": [{"name": n, "added": c} for n, c in by_name.items()]}
 
     # --- Delivery Task list ---------------------------------------------------------------
@@ -1468,7 +1469,7 @@ class AppService:
                 raise UserError(str(e)) from None
             self._pending_install = None
             return {"backup": result.backup.name if result.backup else None,
-                    "count": len(plan.new_data[lootfile.KEY_ACCEPTED])}
+                    "count": len(plan.new_data[plan.list_key])}
 
     @staticmethod
     def _tibia_flags() -> dict:

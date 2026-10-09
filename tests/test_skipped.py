@@ -150,7 +150,8 @@ class SkippedTest(unittest.TestCase):
             self.assertEqual(p["list_name"], "Skipped Loot")
             with self.assertRaises(UserError):  # the preview was for the Skipped list
                 self.svc.install_apply("111", lootfile.REPLACE)
-            self.svc.install_apply("111", lootfile.REPLACE, target=lootfile.MODE_SKIPPED)
+            result = self.svc.install_apply("111", lootfile.REPLACE, target=lootfile.MODE_SKIPPED)
+        self.assertEqual(result["count"], 2)  # the Skipped list's size, not the Accepted list's
         data = lootfile.read_file(path)
         self.assertEqual((data["listType"], data["blacklistTypes"], data["whitelistTypes"]),
                          ("blacklist", [900, 901], [3031]))

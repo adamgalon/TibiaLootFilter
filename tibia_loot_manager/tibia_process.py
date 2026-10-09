@@ -73,7 +73,3 @@ def tibia_status() -> str:
         return RUNNING if running_tibia_paths() else CLOSED
     except OSError:
         return UNKNOWN
-
-
-def is_tibia_running() -> bool:
-    return tibia_status() == RUNNING

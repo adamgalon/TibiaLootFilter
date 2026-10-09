@@ -24,12 +24,6 @@ def cache_dir() -> Path:
     return path
 
 
-def backups_dir() -> Path:
-    path = app_data_dir() / "backups"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
-
 def default_characterdata_dir() -> Path:
     """The commonly reported location. A starting point only — never assumed to exist."""
     return _local_appdata() / "Tibia" / "packages" / "Tibia" / "characterdata"

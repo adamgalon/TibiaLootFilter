@@ -24,6 +24,10 @@ class RedactTest(unittest.TestCase):
         self.assertNotIn("someone@example.com", out)
         self.assertIn("characterdata\\<character folder>", out)
 
+    def test_backup_folder_number(self):
+        out = support.redact("Could not read C:\\x\\backups\\4711\\lootBlackWhitelist-20261010.json")
+        self.assertNotIn("4711", out)
+
     def test_short_label_matches_whole_words_only(self):
         self.assertEqual(support.redact("week of Ek, ek.", ["Ek"]), "week of <character label>, <character label>.")
 

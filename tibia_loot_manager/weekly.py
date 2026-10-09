@@ -46,10 +46,6 @@ def next_reset(now: datetime | None = None) -> datetime:
     return server_save((week_start(now) + timedelta(days=7)).date())
 
 
-def empty_week(now: datetime | None = None) -> dict:
-    return {"week_start": week_start(now).isoformat(), "tasks": []}
-
-
 def valid_week(data) -> bool:
     return (isinstance(data, dict) and isinstance(data.get("week_start", ""), str)
             and isinstance(data.get("tasks", []), list) and all(valid_task(t) for t in data.get("tasks", [])))

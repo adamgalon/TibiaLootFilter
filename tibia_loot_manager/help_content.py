@@ -29,6 +29,23 @@ FAQ = [
     (_("When does the app go online?"),
      _("Only when you press Check for updates, Look up drops, or open a link or report. There are no background "
        "checks.")),
+    (_("What's the difference between Accepted Loot and Skipped Loot?"),
+     _("They're the two lists of Tibia's Quick Loot, and a character uses one at a time. In Accepted Loot mode it "
+       "loots only the items on that list; in Skipped Loot mode it loots everything except the items on that list. "
+       "On the Install screen, choose which list to install; the other one is left as it is.")),
+    (_("Where do market prices come from?"),
+     _("From TibiaMarket, a fansite that records the in-game Market, for the world you choose on the Skipped Loot "
+       "screen. They're estimates: they vary by world and some worlds are updated less often (the app shows how old "
+       "the data is). They're downloaded only when you choose a world or press Refresh.")),
+    (_("How do strictness levels decide what's valuable?"),
+     _("Each item gets a tier from the highest price an NPC pays for it in your installed client's data. Items no "
+       "NPC buys are tiered by their Market category (soul cores high, decoration low). A level takes its own tier "
+       "and every tier above it. The catalog's item details show each item's tier and why, and you can always add "
+       "or remove single items on top of a level.")),
+    (_("How does the hunt report value my loot?"),
+     _("Coins count at face value. Every other item counts at the highest price an NPC pays for it, from your "
+       "installed client's data. The game's own Loot figure uses different prices, so the two totals can differ. "
+       "Items without an NPC buyer, or that couldn't be matched, are listed but not counted.")),
     (_("What is included in a problem report?"),
      _("Only what you see in the report window before sending: your text plus versions, the item and its sources, "
        "and update times. User folders, character folder numbers, character labels and e-mail addresses are "
@@ -36,6 +53,26 @@ FAQ = [
 ]
 
 RELEASE_NOTES = [
+    ("0.5.0", "2026-10-05", [
+        _("Profiles: separate Accepted Loot lists with history, compare, and import/export."),
+        _("Weekly Tasks: track required, collected and remaining amounts for this week's Delivery Tasks."),
+        _("Skipped Loot: a second list for Tibia's Skipped Loot mode, with a recommended junk list from NPC and "
+          "Market prices (TibiaMarket, per world) and a price slider. Install either list to a character."),
+        _("Fix: clicking an item you added yourself on My Accepted Loot showed “Unknown item”."),
+        _("Hunt reports: when several items share a looted name, pick the right one before it counts; the pick is "
+          "remembered."),
+        _("Installing or restoring when the app can't tell whether Tibia is running now needs an explicit "
+          "“I've closed Tibia”."),
+        _("First-run setup can start from a strictness level."),
+        _("Strictness levels: fill a profile from ready-made tiers, Soft to Uber+1 Strict, with a preview of every "
+          "change. New prices update a level only after you review them."),
+        _("Catalog: favorites, saved searches, and adding or removing everything a search matches at once."),
+        _("Hunt reports: paste a Hunt Analyzer session to see what the loot is worth to NPCs, which items aren't on "
+          "your Accepted Loot list, and add the looted amounts to this week's tasks."),
+        _("Portable version: unzip and run, no Python needed."),
+        _("Catalog browsing beyond the first 200 items, safer file writes, recovery from damaged files, and a "
+          "working Cancel for updates."),
+    ]),
     ("0.4.0", "2026-10-04", [
         _("Item pictures everywhere, made from your installed client's own sprites; animated items move."),
         _("Fixes: report redaction no longer alters words that contain a short character label; the app can't be "

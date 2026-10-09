@@ -9,10 +9,25 @@ details, and never uploads your Tibia files.
 
 ## Running it
 
-Requires Windows 10 or 11 with Microsoft Edge (built in) and Python 3.11+ from python.org. There are no third-party
-packages.
+**Portable version (no Python needed):** unzip `TibiaLootManager-<version>.zip` to a folder that will stay put,
+then double-click `Create desktop shortcut.cmd`. It adds a "Tibia Loot List Manager" icon to the desktop and Start
+menu that starts the app without a console window (run it again if you move the folder). Or just double-click
+`Start Tibia Loot List Manager.cmd`. It needs Windows 10 or 11 with Microsoft Edge (built in). If the zip was
+downloaded, unblock it first (right-click → Properties → Unblock) so Windows doesn't warn about every file.
 
+To build that zip yourself:
+
+```powershell
+python tools/build_portable.py   # writes dist/TibiaLootManager-<version>/ and .zip
 ```
+
+The builder downloads Python's official embeddable runtime (the same version as the Python running the builder) from
+python.org. It checks the download against the SHA-256 that python.org publishes, adds the app, and zips the
+result.
+
+**From source:** Python 3.11+ from python.org. There are no third-party packages.
+
+```powershell
 python -m tibia_loot_manager      # or double-click TibiaLootManager.pyw
 python -m unittest discover -s tests -t .
 ```
@@ -34,8 +49,9 @@ internet: the Inter font (OFL) and Phosphor icons (MIT) are bundled in `web/vend
 - `webui/server.py`: a small HTTP server on `127.0.0.1` only. Every API call must carry a random per-launch token,
   and the `Host` header is checked, so web pages and other programs can't use it. Static files carry a strict
   Content-Security-Policy.
-- `webui/main.py`: opens the window with Edge in app mode (`msedge --app`). It shows native Windows file dialogs
-  through a hidden Tk window, and exits when the window closes.
+- `webui/main.py`: opens the window with Edge in app mode (`msedge --app`) and exits when the window closes.
+- `webui/native_dialogs.py`: the Windows Explorer file and folder dialogs, called through COM with `ctypes`. There
+  is no Tk, so the embeddable runtime of the portable version works.
 
 The theme follows your choice (dark or light, toggled in the sidebar) and is remembered.
 
@@ -58,11 +74,14 @@ This approach was chosen over a web source such as TibiaWiki's GIFs because:
 
 | Screen | Purpose |
 | --- | --- |
-| Item catalog | Every lootable item from your installed client. Search it, filter by category, view values, NPC prices and creature drops, and add or remove items from either list. |
+| Item catalog | Every lootable item from your installed client. Search it, filter by category, view values, NPC prices and creature drops, and add or remove items from either list. Star items as **favorites**, **save searches** (search text plus filters) to apply them again with one click, and **add or remove everything a search matches** at once, after a confirmation that shows how many items change. Bulk changes are recorded in the profile's history. |
 | Delivery Task list | The source candidate list with your edits applied. Excluded items stay visible under *Excluded by me*, and *Restore source defaults* discards your edits. |
-| My Accepted Loot | Your personal list: the Delivery Task list (switchable) plus items you added minus items you removed. Shows the item count, the limit warning and unverified items. |
+| My Accepted Loot | Your personal list: the Delivery Task list (switchable) plus items you added minus items you removed. Shows the item count, the limit warning and unverified items. **Profiles** keep separate lists (for characters, hunts or goals): create, switch, rename, duplicate, compare, export or import them, or copy a character's in-game list. Every change is kept in the profile's **history** and any version can be restored. The Delivery Task list edits are shared by all profiles. **Strictness levels** (Soft, Regular, Semi-Strict, Strict, Very Strict, Uber Strict, Uber+1 Strict) fill a profile from ready-made tiers in one click; see [Strictness levels](#strictness-levels). |
+| Weekly Tasks | Track this week's Delivery Tasks: required, collected and remaining amounts, with quick +1/+5/+10 buttons. Warns when a task item isn't on your Accepted Loot list. The week resets at Monday's server save (10:00 German time) and earlier weeks are kept as a summary. |
+| Hunt reports | Paste a session from Tibia's Hunt Analyzer ("Copy to clipboard"). Shows the session totals, each looted item matched to its client ID with the best NPC buy price, items it couldn't match, and whether each item is on your Accepted Loot list (one click to add it). When several items share a looted name (there are several "bag" objects, for example), the likeliest is shown, but it isn't counted in the NPC value or tasks until you pick the right one; the pick is remembered for later reports. Looted amounts can be added to this week's tasks once per session. The last 30 sessions are kept in `hunts.json`. Only the pasted text is read. |
 | Copy & export | A one-item-per-line checklist for adding items through the Cyclopedia, and a game-format file export. |
-| Install to character | Choose the character data folder, label the numbered folders, preview Merge or Replace, install with a backup, and restore backups. |
+| My Skipped Loot | Tibia's other Quick Loot list: in Skipped Loot mode the character loots everything **except** these items. Download market prices for your world, then use the **recommended junk** list with a price slider (10 gp to 5,000 gp, with the item count at each step); see [Skipped Loot](#skipped-loot). Skip or un-skip single items from the catalog. Per profile, with history. |
+| Install to character | Choose the character data folder, label the numbered folders, choose which list to install (Accepted Loot or Skipped Loot), preview Merge or Replace, install with a backup, and restore backups. |
 | Data sources | Run *Check for updates*, see each source's type (official client data, community wiki, third-party estimate) and freshness, and set an optional list-size limit. |
 | Help & Support | FAQ, release notes, contact link, and report forms for bugs, wrong item data and feature ideas. |
 
@@ -108,8 +127,9 @@ filtered by ID state.
   source fails, its cached copy is kept and the error is shown. On first run the app uses the Delivery Task snapshot
   and item index bundled in `tibia_loot_manager/data/` (refresh them with `python tools/build_seed.py`).
 - **Values** are stored as provenance-tagged records: what NPCs pay you, what NPCs charge you, the source, the
-  retrieval date, and a world for market data. No market source is configured yet (see [SOURCES.md](SOURCES.md)), and
-  nothing is selected or ranked by value. `values.MarketValueProvider` is the extension point for adding one later.
+  retrieval date, and a world for market data. Market prices come from TibiaMarket for the world you choose (a
+  third-party estimate, downloaded only when you ask; see [SOURCES.md](SOURCES.md)). Value-based lists (strictness
+  levels, recommended junk) are only applied after you preview them.
 
 ## The loot file
 
@@ -133,10 +153,16 @@ How installing is kept safe:
 - *Merge* keeps the character's current Accepted items and adds yours. *Replace* sets the Accepted list to exactly
   yours and lists every item it will remove. Both modes switch `listType` to `whitelist` and leave the Skipped list as
   it is. The preview shows the mode change.
-- If Tibia is running, the app asks you to close it. It never closes the game itself.
-- Before writing, the app saves a timestamped backup to `%LOCALAPPDATA%\TibiaLootManager\backups\<folder>\`. It then
-  writes only that character's loot file, reads it back and compares it. If the check fails, the backup is restored
-  automatically. Backups can be restored from the Install tab.
+- If Tibia is running, installing and restoring are blocked until you close it. The app never closes the game
+  itself. If it can't tell whether Tibia is running, nothing is written until you tick **I've closed Tibia**.
+- Before writing, the app saves a timestamped backup to `%LOCALAPPDATA%\TibiaLootManager\backups\<folder>\`. The new
+  content goes to a temporary file in the character's folder. That file is swapped in with a single atomic rename,
+  so an interruption leaves the old file or the new one, never a partial one, and the temporary file never outlives
+  the write. The result is read back and compared. If the check fails, the backup is put back the same way.
+  Restoring a backup works the same and keeps your current file if anything goes wrong. Backups can be restored
+  from the Install tab.
+- If a saved file of the app is damaged, it is set aside as `*.damaged-<time>`, your previous save or the bundled
+  data is used, and a notice tells you. If the app can't start at all, it shows the reason and writes `crash.log`.
 - No verified current list-size limit was found, so none is built in. You can set one on the Data sources tab to get
   a warning.
 
@@ -163,8 +189,62 @@ With a destination set, *Send* opens your browser or e-mail program with the rep
 there. Nothing is sent automatically. Without one, the report can be copied or saved, and closing an unsaved report
 offers to save it to the app's `reports` folder.
 
+## Strictness levels
+
+Like loot-filter strictness in other games, each level is a ready-made Accepted Loot list, from **Soft** (almost
+anything worth something) to **Uber+1 Strict** (only the most valuable items). Every item gets a tier:
+
+| Tier | NPC buys it for at least | Lowest level that still takes it |
+| --- | --- | --- |
+| S | 100,000 gp | Uber+1 Strict |
+| A | 20,000 gp | Uber Strict |
+| B | 5,000 gp | Very Strict |
+| C | 1,000 gp | Strict |
+| D | 200 gp | Semi-Strict |
+| E | 50 gp | Regular |
+| F | 1 gp | Soft |
+| Junk | — | none |
+
+Each level also takes every tier above its own. Prices are the highest NPC buy price in your installed client's
+data. Items no NPC buys are tiered by Market category instead: soul cores are B, market-only equipment and
+valuables C, creature products D, decoration and food junk. Quest items and items that can't be sold on the
+Market are junk, and coins are always S. The item details panel in the catalog shows each item's tier and why.
+
+- **Choosing a level** on the Accepted Loot screen shows exactly which items it adds and removes before anything
+  changes. Items you add or remove yourself always stay on top of the level, and the **Always include Delivery Task
+  items** switch keeps your task items whatever their value.
+- **The level follows new prices after review.** When a client update or new tier rules change what a level holds,
+  the Accepted Loot screen says so and lists the changes. Nothing changes until you accept.
+- **Changing the rules:** put a `tier_rules.json` in the app's data folder with only the entries you want to change,
+  for example `{"unpriced_category_tiers": {"Soul Cores": "A"}, "items": {"3043": "S"}}`. Each entry overrides
+  the same entry in the bundled [`tier_rules.json`](tibia_loot_manager/data/tier_rules.json).
+- Levels are saved per profile and go with profile export and import.
+
+## Skipped Loot
+
+Tibia's Quick Loot has two lists, and a character uses one at a time: **Accepted Loot** (loot only these) or
+**Skipped Loot** (loot everything except these). The game file keeps both. Installing one list switches the
+character to its mode and leaves the other list untouched.
+
+The **recommended junk** list is built from two price sources, and an item is junk only when both say it's cheap:
+
+- the highest price an NPC pays for it (your installed client), and
+- what buyers paid for it this month on your world's Market (TibiaMarket, a third-party estimate).
+
+| Limit (Antica, October 2026) | Items skipped |
+| --- | --- |
+| 20 gp | about 230 |
+| 50 gp | about 280 |
+| 100 gp | about 350 |
+| 500 gp | about 600 |
+
+Items with too few recent trades are never called junk, because rare and valuable items (boss trophies, uncommon
+equipment) often have none. Delivery Task items and coins are never skipped, and only items some creature drops
+are considered. When new market prices change the list, the Skipped Loot screen shows the changes for review first.
+Items you skip or keep looting yourself always stay as you set them.
+
 ## Roadmap
 
-Planned features (Weekly Task planner, item-to-hunt finder, world-specific values, loot profiles, hunt-session
-analysis, market watchlist) are described in [docs/ROADMAP.md](docs/ROADMAP.md). They are kept separate from the
-core.
+Planned features (item-to-hunt finder, world-specific values, market watchlist) are described in
+[docs/ROADMAP.md](docs/ROADMAP.md). They are kept separate from the core. Weekly Tasks, loot profiles and hunt
+reports from that list are built.

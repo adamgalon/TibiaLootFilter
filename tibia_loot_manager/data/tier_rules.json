@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "about": "How items are tiered for strictness levels. To change it, put a tier_rules.json in the app's data folder with only the entries you want to change; each one overrides the same entry here.",
+  "price_tiers": {"S": 100000, "A": 20000, "B": 5000, "C": 1000, "D": 200, "E": 50, "F": 1},
+  "unpriced_category_tiers": {
+    "Premium Scrolls": "A",
+    "Soul Cores": "B",
+    "Valuables": "C",
+    "Amulets": "C", "Armors": "C", "Axes": "C", "Boots": "C", "Clubs": "C", "Distance Weapons": "C",
+    "Fist Weapons": "C", "Helmets and Hats": "C", "Legs": "C", "Quivers": "C", "Rings": "C", "Shields": "C",
+    "Swords": "C", "Wands and Rods": "C",
+    "Creature Products": "D",
+    "Ammunition": "E", "Potions": "E", "Runes": "E",
+    "Containers": "F", "Others": "F", "Tools": "F",
+    "Decoration": "junk", "Food": "junk"
+  },
+  "unpriced_default": "junk",
+  "items": {"3031": "S", "3035": "S", "3043": "S"}
+}

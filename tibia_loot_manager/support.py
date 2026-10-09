@@ -124,7 +124,7 @@ def redact(text: str, labels: list[str] | tuple = ()) -> str:
     for value, placeholder in replacements:
         for variant in {value, value.replace("\\", "/")}:
             text = re.sub(re.escape(variant), lambda _m, p=placeholder: p, text, flags=re.IGNORECASE)
-    text = re.sub(r"(characterdata[\\/])\d+", r"\1<character folder>", text, flags=re.IGNORECASE)
+    text = re.sub(r"((?:characterdata|backups)[\\/])\d+", r"\1<character folder>", text, flags=re.IGNORECASE)
     text = re.sub(r"[^@\s<>\"']+@[^@\s<>\"']+\.\w+", "<email>", text)
     for label in labels:
         if label and len(label) >= 2:

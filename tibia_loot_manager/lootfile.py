@@ -150,27 +150,40 @@ class InstallPlan:
     added: list[int]
     removed: list[int]
     kept: list[int]
-    also_skipped: list[int]  # IDs on both the new Accepted list and the existing Skipped list
+    also_other: list[int]  # IDs on both the installed list and the character's other list
     creates_file: bool
+    target: str = MODE_ACCEPTED  # which list is installed: MODE_ACCEPTED or MODE_SKIPPED
 
     @property
     def mode_change(self) -> bool:
-        return self.old_mode != MODE_ACCEPTED
+        return self.old_mode != self.target
+
+    @property
+    def list_key(self) -> str:
+        return KEY_ACCEPTED if self.target == MODE_ACCEPTED else KEY_SKIPPED
+
+    @property
+    def other_key(self) -> str:
+        return KEY_SKIPPED if self.target == MODE_ACCEPTED else KEY_ACCEPTED
 
 
-def plan_install(existing: dict | None, accepted_ids: list[int], mode: str) -> InstallPlan:
-    """Compute the file to write. Only ``listType`` and ``whitelistTypes`` change;
-    the Skipped Loot list and any unknown fields are carried over unchanged."""
+def plan_install(existing: dict | None, ids: list[int], mode: str, target: str = MODE_ACCEPTED) -> InstallPlan:
+    """Compute the file to write: the target list (Accepted or Skipped) and ``listType``, which switches the
+    character to that list. The other list and any unknown fields are carried over unchanged."""
     if mode not in (MERGE, REPLACE):
         raise ValueError(mode)
+    if target not in (MODE_ACCEPTED, MODE_SKIPPED):
+        raise ValueError(target)
+    key = KEY_ACCEPTED if target == MODE_ACCEPTED else KEY_SKIPPED
+    other = KEY_SKIPPED if target == MODE_ACCEPTED else KEY_ACCEPTED
     base = dict(existing) if existing else {KEY_SKIPPED: [], KEY_MODE: MODE_SKIPPED, KEY_ACCEPTED: []}
-    old_ids = list(base.get(KEY_ACCEPTED, []))
-    new_set = set(accepted_ids)
+    old_ids = list(base.get(key, []))
+    new_set = set(ids)
     if mode == MERGE:
         result = old_ids + sorted(new_set - set(old_ids))
     else:
         result = sorted(new_set)
-    data = {**base, KEY_MODE: MODE_ACCEPTED, KEY_ACCEPTED: result}
+    data = {**base, KEY_MODE: target, key: result}
     old_set = set(old_ids)
     return InstallPlan(
         mode=mode,
@@ -179,8 +192,9 @@ def plan_install(existing: dict | None, accepted_ids: list[int], mode: str) -> I
         added=sorted(set(result) - old_set),
         removed=sorted(old_set - set(result)),
         kept=sorted(old_set & set(result)),
-        also_skipped=sorted(set(result) & set(base.get(KEY_SKIPPED, []))),
+        also_other=sorted(set(result) & set(base.get(other, []))),
         creates_file=existing is None,
+        target=target,
     )
 
 
@@ -219,21 +233,34 @@ def list_backups(backups_root: Path, folder_id: str) -> list[Path]:
     return sorted(d.glob("lootBlackWhitelist-*.json"), reverse=True) if d.is_dir() else []
 
 
-def _write_verified(file_path: Path, data: dict, staging_dir: Path) -> None:
-    """Write via a staging file kept outside the character folder, then read back and compare."""
-    staging_dir.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix="pending-", suffix=".json", dir=staging_dir)
-    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
-        f.write(serialize(data))
+def _replace_atomically(file_path: Path, content: bytes) -> None:
+    """Replace ``file_path`` in one step: the new content goes to a temporary file in the same
+    folder (so the same drive), is flushed to disk, then swapped in with os.replace. An
+    interruption leaves either the old file or the new one, never a partial file. The
+    temporary file never outlives this call."""
+    file_path = Path(file_path)
+    fd, tmp = tempfile.mkstemp(prefix=f".{file_path.name}.", suffix=".tmp", dir=file_path.parent)
     try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp, file_path)
-    except OSError:
-        # e.g. staging on another drive: fall back to a direct write
-        shutil.copyfile(tmp, file_path)
-        os.unlink(tmp)
-    readback = read_file(file_path)
-    if readback != data:
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def _write_verified(file_path: Path, data: dict) -> None:
+    """Write atomically, then read back and compare."""
+    _replace_atomically(file_path, serialize(data).encode("utf-8"))
+    if read_file(file_path) != data:
         raise LootFileError(_("The written file did not read back identically."))
+
+
+def _put_back(backup: Path, file_path: Path) -> None:
+    """Restore a backup's exact bytes over ``file_path``, atomically."""
+    _replace_atomically(file_path, Path(backup).read_bytes())
 
 
 @dataclass
@@ -252,12 +279,11 @@ def install(plan: InstallPlan, folder: CharacterFolder, backups_root: Path) -> I
     if current != (folder.data if folder.exists else None):
         raise LootFileError(_("The loot file changed since the preview was made. Refresh and try again."))
     backup = create_backup(folder.file_path, backups_root, folder.folder_id)
-    staging = Path(backups_root) / ".staging"
     try:
-        _write_verified(folder.file_path, plan.new_data, staging)
+        _write_verified(folder.file_path, plan.new_data)
     except Exception as e:
         if backup:
-            shutil.copyfile(backup, folder.file_path)
+            _put_back(backup, folder.file_path)
             raise LootFileError(_("Install failed and the previous file was restored: {error}").format(error=e)) from e
         if plan.creates_file:
             try:
@@ -270,8 +296,15 @@ def install(plan: InstallPlan, folder: CharacterFolder, backups_root: Path) -> I
 
 
 def restore_backup(backup: Path, folder: CharacterFolder, backups_root: Path) -> Path | None:
-    """Restore a backup over the character's loot file, backing up the current file first."""
+    """Restore a backup over the character's loot file, backing up the current file first.
+    If the restore can't be verified, the current file is put back."""
     data = read_file(backup)
     safety = create_backup(folder.file_path, backups_root, folder.folder_id)
-    _write_verified(folder.file_path, data, Path(backups_root) / ".staging")
+    try:
+        _write_verified(folder.file_path, data)
+    except Exception as e:
+        if safety:
+            _put_back(safety, folder.file_path)
+            raise LootFileError(_("Restore failed and your current file was kept: {error}").format(error=e)) from e
+        raise
     return safety

@@ -212,18 +212,33 @@ class ItemImages:
         safe_tag = "".join(c for c in version_tag if c.isalnum() or c in "._-")[:40] or "unknown"
         self.cache_dir = Path(cache_root) / safe_tag
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self._locks: dict[int, threading.Lock] = {}
+        self._locks_guard = threading.Lock()
+
+    def _lock_for(self, client_id: int) -> threading.Lock:
+        with self._locks_guard:
+            return self._locks.setdefault(client_id, threading.Lock())
 
     def image(self, client_id: int, sprite: dict | None) -> bytes | None:
+        """The item's PNG, rendering it at most once even when many requests ask at the same time
+        (one lock per item). A failed cache write never fails the request: the bytes are returned."""
         path = self.cache_dir / f"{client_id}.png"
-        try:
-            return path.read_bytes()
-        except FileNotFoundError:
-            pass
-        if not sprite:
-            return None
-        data = render_item(self.sheets, sprite)
-        if data:
-            tmp = path.with_name(f"{client_id}.{threading.get_ident()}.tmp")
-            tmp.write_bytes(data)
-            tmp.replace(path)
-        return data
+        with self._lock_for(client_id):
+            try:
+                return path.read_bytes()
+            except FileNotFoundError:
+                pass
+            if not sprite:
+                return None
+            data = render_item(self.sheets, sprite)
+            if data:
+                tmp = path.with_name(f"{client_id}.{threading.get_ident()}.tmp")
+                try:
+                    tmp.write_bytes(data)
+                    tmp.replace(path)
+                except OSError:
+                    try:
+                        tmp.unlink()
+                    except OSError:
+                        pass
+            return data

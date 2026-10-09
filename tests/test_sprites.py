@@ -110,6 +110,18 @@ class SheetTest(unittest.TestCase):
         with self.assertRaises(sprites.SpriteError):
             sprites.decode_sheet(b"\x00\x00not a sheet")
 
+    def test_concurrent_requests_for_one_image(self):
+        import threading
+        images = sprites.ItemImages(self.root, self.root / "cache", "v2")
+        results = []
+        threads = [threading.Thread(target=lambda: results.append(images.image(8, {"ids": [101]}))) for _ in range(16)]
+        [t.start() for t in threads]
+        [t.join() for t in threads]
+        self.assertEqual(len(results), 16)
+        self.assertTrue(all(results))  # regression: concurrent renders used to fail on Windows
+        self.assertEqual(len(set(results)), 1)
+        self.assertEqual([p.name for p in (self.root / "cache" / "v2").iterdir()], ["8.png"])
+
     def test_disk_cache(self):
         images = sprites.ItemImages(self.root, self.root / "cache", "v1")
         first = images.image(7, {"ids": [101]})

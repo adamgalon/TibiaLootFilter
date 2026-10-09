@@ -94,11 +94,15 @@ def page_names(record: dict) -> set[str]:
 ORIGIN_DELIVERY_SOURCE = "delivery_source"
 ORIGIN_DELIVERY_USER = "delivery_user"
 ORIGIN_MANUAL = "manual"
+ORIGIN_PRESET = "preset"
+ORIGIN_RECOMMENDED = "recommended"
 
 ORIGIN_TEXT = {
     ORIGIN_DELIVERY_SOURCE: _("Delivery Task (source)"),
     ORIGIN_DELIVERY_USER: _("Delivery Task (added by you)"),
     ORIGIN_MANUAL: _("Added by you"),
+    ORIGIN_PRESET: _("Strictness level"),
+    ORIGIN_RECOMMENDED: _("Recommended junk"),
 }
 
 
@@ -346,6 +350,11 @@ class Library:
         candidates: list[Entry] = []
         if self.state.accepted_follow_delivery:
             candidates.extend(self.delivery_entries()[0])
+        if self.state.accepted_preset:
+            for cid in self.state.accepted_preset_items:
+                if cid in self.items_by_id:
+                    candidates.append(Entry(client_key(cid), self.item_name(cid), cid, self.client_id_status(cid),
+                                            ORIGIN_PRESET))
         for cid in self.state.accepted_extra:
             status = self.client_id_status(cid)
             candidates.append(Entry(client_key(cid), self.item_name(cid), cid, status, ORIGIN_MANUAL))
@@ -359,6 +368,35 @@ class Library:
                 entry.client_id is not None and client_key(entry.client_id) in excluded_keys)
             (excluded if is_excluded else active).append(entry)
         return active, excluded
+
+    def skipped_entries(self) -> tuple[list[Entry], list[Entry]]:
+        """Return (active, excluded) Skipped Loot entries: the recommended junk (if used) plus items skipped by
+        hand, minus recommended items the user keeps looting. Client IDs only."""
+        st = self.state
+        recommended = st.skipped_items if st.skipped_recommended else []
+        excluded = set(st.skipped_excluded)
+        active, removed, seen = [], [], set()
+        for cid, origin in [(c, ORIGIN_RECOMMENDED) for c in recommended] + [(c, ORIGIN_MANUAL) for c in st.skipped_extra]:
+            if cid in seen or cid not in self.items_by_id:
+                continue
+            seen.add(cid)
+            entry = Entry(client_key(cid), self.item_name(cid), cid, self.client_id_status(cid), origin)
+            (removed if origin == ORIGIN_RECOMMENDED and cid in excluded else active).append(entry)
+        return active, removed
+
+    def skipped_ids(self) -> set[int]:
+        return {e.client_id for e in self.skipped_entries()[0] if e.exportable}
+
+    def add_to_skipped(self, client_id: int) -> None:
+        if client_id in self.state.skipped_excluded:
+            self.state.skipped_excluded.remove(client_id)
+        if client_id not in {e.client_id for e in self.skipped_entries()[0]}:
+            self.state.skipped_extra.append(client_id)
+
+    def remove_from_skipped(self, client_id: int) -> None:
+        self.state.skipped_extra = [c for c in self.state.skipped_extra if c != client_id]
+        if client_id in {e.client_id for e in self.skipped_entries()[0]} and client_id not in self.state.skipped_excluded:
+            self.state.skipped_excluded.append(client_id)
 
     def accepted_ids(self) -> set[int]:
         return {e.client_id for e in self.accepted_entries()[0] if e.exportable}
@@ -398,6 +436,48 @@ class Library:
                 if key not in self.state.accepted_excluded:
                     self.state.accepted_excluded.append(key)
 
+    def set_accepted_many(self, keys: list[str], add: bool) -> list[str]:
+        """Add or remove many rows at once (catalog keys: "3031" or "wiki:Title").
+
+        Same result as toggling each key, but the list is rebuilt a fixed number of times instead of
+        once per key. Returns the keys whose membership actually changed.
+        """
+        active = self.accepted_entries()[0]
+        ids = {e.client_id for e in active if e.client_id is not None}
+        present = {e.key for e in active}
+
+        def member(key):
+            return key in present or (key.isdigit() and int(key) in ids)
+
+        wanted = [k for k in dict.fromkeys(keys) if member(k) != add]
+        if not wanted:
+            return []
+        if add:
+            unexclude = set()
+            for key in wanted:
+                unexclude |= self._keys_for(int(key)) if key.isdigit() else {key}
+            self.state.accepted_excluded = [k for k in self.state.accepted_excluded if k not in unexclude]
+            ids = {e.client_id for e in self.accepted_entries()[0] if e.client_id is not None}
+            for key in wanted:
+                if key.isdigit() and int(key) not in ids and int(key) not in self.state.accepted_extra:
+                    self.state.accepted_extra.append(int(key))
+        else:
+            drop = {int(k) for k in wanted if k.isdigit()}
+            self.state.accepted_extra = [c for c in self.state.accepted_extra if c not in drop]
+            still = self.accepted_entries()[0]
+            targets = set(wanted)
+            excluded = set(self.state.accepted_excluded)
+            for entry in still:
+                if entry.key in targets or (entry.client_id is not None and str(entry.client_id) in targets):
+                    keys_now = {entry.key} | (self._keys_for(entry.client_id) if entry.client_id is not None else set())
+                    for k in sorted(keys_now - excluded):
+                        self.state.accepted_excluded.append(k)
+                        excluded.add(k)
+        active = self.accepted_entries()[0]
+        ids = {e.client_id for e in active if e.client_id is not None}
+        present = {e.key for e in active}
+        return [k for k in wanted if member(k) == add]
+
     def add_to_delivery(self, client_id: int) -> None:
         keys = self._keys_for(client_id)
         self.state.delivery_removed = [k for k in self.state.delivery_removed if k not in keys]
@@ -425,6 +505,8 @@ class Library:
         self.state.accepted_follow_delivery = True
         self.state.accepted_extra = []
         self.state.accepted_excluded = []
+        self.state.accepted_preset = ""
+        self.state.accepted_preset_items = []
 
     # --- details ---------------------------------------------------------------
 

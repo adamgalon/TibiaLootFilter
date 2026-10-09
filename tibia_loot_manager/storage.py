@@ -20,6 +20,30 @@ def read_json(path: Path, default: Any = None) -> Any:
         return default
 
 
+def quarantine(path: Path) -> Path:
+    """Move a damaged file aside (kept for diagnosis) and return its new path."""
+    path = Path(path)
+    target = path.with_name(f"{path.name}.damaged-{datetime.now():%Y%m%d-%H%M%S}")
+    n = 1
+    while target.exists():
+        target = path.with_name(f"{path.name}.damaged-{datetime.now():%Y%m%d-%H%M%S}-{n}")
+        n += 1
+    os.replace(path, target)
+    return target
+
+
+def read_json_checked(path: Path, default: Any = None, valid=None) -> tuple[Any, Path | None]:
+    """Like read_json, but a file that isn't valid JSON (or fails ``valid``) is quarantined
+    and ``default`` returned, together with where the damaged file was moved."""
+    try:
+        data = read_json(path, default)
+    except (ValueError, UnicodeDecodeError):
+        return default, quarantine(path)
+    if data is not default and valid is not None and not valid(data):
+        return default, quarantine(path)
+    return data, None
+
+
 def write_json_atomic(path: Path, data: Any, indent: int | None = 2) -> None:
     """Write JSON so that a crash never leaves a half-written file behind."""
     path = Path(path)

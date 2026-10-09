@@ -29,12 +29,24 @@ class PlanTest(unittest.TestCase):
         self.assertEqual(plan.new_data["futureKey"], {"x": 1})
         self.assertEqual((plan.added, plan.removed, plan.kept), ([236, 17829], [], [3031]))
         self.assertTrue(plan.mode_change)
-        self.assertEqual(plan.also_skipped, [236])
+        self.assertEqual(plan.also_other, [236])
 
     def test_replace_shows_removals(self):
         plan = LF.plan_install(EXISTING, [17829], LF.REPLACE)
         self.assertEqual(plan.new_data["whitelistTypes"], [17829])
         self.assertEqual(plan.removed, [3031])
+
+    def test_skipped_list_install_keeps_the_accepted_list(self):
+        plan = LF.plan_install(EXISTING, [3031, 900], LF.REPLACE, target=LF.MODE_SKIPPED)
+        self.assertEqual(plan.new_data["listType"], "blacklist")
+        self.assertEqual(plan.new_data["blacklistTypes"], [900, 3031])
+        self.assertEqual(plan.new_data["whitelistTypes"], EXISTING["whitelistTypes"])  # untouched
+        self.assertEqual(plan.new_data["futureKey"], {"x": 1})
+        self.assertEqual((plan.added, plan.removed), ([900, 3031], [236, 2920]))
+        self.assertFalse(plan.mode_change)  # the example file is already in Skipped mode
+        self.assertEqual(plan.also_other, [3031])
+        with self.assertRaises(ValueError):
+            LF.plan_install(EXISTING, [1], LF.MERGE, target="greylist")
 
     def test_new_file(self):
         plan = LF.plan_install(None, [5, 4], LF.MERGE)
@@ -91,13 +103,43 @@ class InstallTest(unittest.TestCase):
         folder = self.chars()["222"]
         plan = LF.plan_install(None, [1], LF.REPLACE)
 
-        def broken(file_path, data, staging):
+        def broken(file_path, data):
             file_path.write_text("{half")
             raise OSError("disk full")
         with mock.patch.object(LF, "_write_verified", broken):
             with self.assertRaises(LF.LootFileError):
                 LF.install(plan, folder, self.backups)
         self.assertFalse(folder.file_path.exists())
+
+    def test_write_leaves_no_temp_files(self):
+        folder = self.chars()["111"]
+        LF.install(LF.plan_install(folder.data, [17829], LF.MERGE), folder, self.backups)
+        self.assertEqual(sorted(p.name for p in (self.chardata / "111").iterdir()), [LF.FILE_NAME, "other.json"])
+
+    def test_failed_install_restores_backup_atomically(self):
+        folder = self.chars()["111"]
+        plan = LF.plan_install(folder.data, [17829], LF.MERGE)
+
+        def broken(file_path, data):
+            file_path.write_text("{half")
+            raise OSError("disk full")
+        with mock.patch.object(LF, "_write_verified", broken):
+            with self.assertRaises(LF.LootFileError):
+                LF.install(plan, folder, self.backups)
+        self.assertEqual(LF.read_file(folder.file_path), EXISTING)
+
+    def test_failed_restore_keeps_current_file(self):
+        folder = self.chars()["111"]
+        result = LF.install(LF.plan_install(folder.data, [17829], LF.MERGE), folder, self.backups)
+        installed = LF.read_file(folder.file_path)
+
+        def broken(file_path, data):
+            file_path.write_text("{half")
+            raise OSError("disk full")
+        with mock.patch.object(LF, "_write_verified", broken):
+            with self.assertRaises(LF.LootFileError):
+                LF.restore_backup(result.backup, self.chars()["111"], self.backups)
+        self.assertEqual(LF.read_file(folder.file_path), installed)
 
     def test_refuses_if_file_changed_since_preview(self):
         folder = self.chars()["111"]
